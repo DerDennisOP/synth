@@ -1,4 +1,4 @@
-from picozero import Pot, Button, LED
+from picozero import Pot, Button,LED
 import asyncio
 from machine import Pin, I2S
 
@@ -6,17 +6,11 @@ from machine import Pin, I2S
 class Buttons():
     def __init__(self, pins):
         self.buttons = [Button(pin) for pin in pins]
-        self.last_pressed = None  # Variable zum Speichern des zuletzt gedrückten Buttons
-        for button in self.buttons:
-            button.when_pressed = lambda b=button: self.on_button_pressed(b)
-            button.when_released = lambda b=button: self.on_button_released(b)
+        self.buttonpins = pins
 
-    def on_button_pressed(self, button):
-        self.last_pressed = button  # Speichere den gedrückten Button
-
-    def on_button_released(self, button):
-        if self.last_pressed == button:
-            self.last_pressed = None  # Setze den zuletzt gedrückten Button zurück
+    def get_buttons(self):
+        return self.buttons
+    
 
 class Led():
     def __init__(self,pins):
@@ -33,19 +27,17 @@ class Led():
         
 
 class Potentiometers():
-    def __init__(self,pins):
+    def __init__(self,pins,maxV):
         self.pot = [Pot(pin) for pin in pins]
-        self.state = [0,0,0]
+        self.maxV = maxV
 
-    def update(self):
-        for i in range(len(self.pot)):
-            self.state[i] = self.pot[i].value
+    def get_state(self,index,steps):                
+        r = round (steps / self.maxV *  self.pot[index].voltage)
+        return r
+    
+    def get_V(self,index):
+        return self.pot[index].voltage
 
-    def get_state(self,steps=[100,100,100]):
-        n =[0,0,0]
-        for i in range(len(self.pot)):
-            n[i] = int(self.state[i] * steps[i])
-        return n
 
 class Speaker():
     def __init__(self,sample_rate=8000,bits=16,buffer_size=2000):
@@ -67,6 +59,3 @@ class Speaker():
 
     def write(self,buffer):
         self.audio.write(buffer)
-
-
-

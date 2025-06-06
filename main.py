@@ -1,13 +1,22 @@
+import time
+
+time.sleep(1)
+
 import input
 import asyncio
 import synth
 import notes
+import time
+import display
+import _thread
 
-BUTTONS = input.Buttons([13, 12, 11,10,9,8,7,6])
-POTENTIOMETER = input.Potentiometers([26,27,28])
+BUTTONS = input.Buttons(([13, 12, 11,10,9,8,7,6]))
+POTENTIOMETER = input.Potentiometers([26,27,28],3.3)
 LEDS = input.Led([19,20,21,22])
-SPEAKER = input.Speaker(buffer_size=2000)
+SPEAKER = input.Speaker(buffer_size=600)
 SYNTH = synth.Synth(synth.Config())
+MENUE = display.Window(SYNTH)
+_thread.start_new_thread(MENUE.display, ())
 frequency_module = SYNTH.add_module(synth.Input)
 frequency_module2 = SYNTH.add_module(synth.Input)
 frequency_module3 = SYNTH.add_module(synth.Input)
@@ -22,12 +31,14 @@ envelope = SYNTH.add_module(synth.Envelope)
 lpf = SYNTH.add_module(synth.LowPassFilter)
 ak_wave = 0
 ak_effect = 0
+loop_buffer = []
+is_recording = False
+is_playing = False
 
 
 frequency_module3.set_value(1)
 volume_sine.set("frequency", frequency_module3)
-
-frequency_module2.set_value(int(440/4))
+frequency_module2.set_value(443)
 base_sine.set("frequency", frequency_module2)
 
 frequency_module.set_value(440)
@@ -45,16 +56,30 @@ envelope.set("input", mixer)
 # lpf.set("input", envelope)
 SYNTH.output.set("input", envelope)
 
-
 async def updatespeaker():
     stream = asyncio.StreamWriter(SPEAKER.audio)
-    NEXT_BUFFER = SYNTH.get_buffer()
-    stream.write(NEXT_BUFFER)
+    next_buffer = SYNTH.get_buffer()
+    stream.write(next_buffer)
     while True:
-        NEXT_BUFFER = SYNTH.get_buffer()
+        if MENUE.display_state == "Graph":
+            MENUE.set_buffer(SYNTH.read())
+        next_buffer = SYNTH.get_buffer()
         await stream.drain()
-        stream.write(NEXT_BUFFER)
+        stream.write(next_buffer)
 
+def record_loop(pause_time,freq,time):
+    global loop_buffer
+    loop_buffer.append([pause_time,freq,time])
+    
+async def play_loop():
+    while True:
+        for pause_time, freq, time in loop_buffer:
+            await asyncio.sleep_ms(pause_time)  
+            frequency_module.set_value(freq)
+            envelope.trigger_attack()
+            await asyncio.sleep_ms(time)
+            envelope.trigger_release()
+        await asyncio.sleep(0.5)
 
 def pentatonik(frequency):
     # Intervalle für die Dur-Pentatonik
@@ -67,7 +92,6 @@ def pentatonik(frequency):
         pentatonik_frequencies.append(note_frequency)
 
     return pentatonik_frequencies
-
 
 def tooggle_wave():
     global ak_wave
@@ -100,48 +124,88 @@ def toggle_effects():
     elif ak_effect == 2:
         pass
     elif ak_effect == 3:
-        print("heheheheheh")
         pass
 
-# Beispielaufruf
 input_frequency = 440  # Beispiel: A4
 pentatonik_frequencies = pentatonik(input_frequency)
+# SYNTH.output.set_amplitude(10)
 
 async def main():
-    potentiometers = POTENTIOMETER
+    global is_recording, is_playing, loop_buffer, last_press_time
+    p = POTENTIOMETER
     buttons = BUTTONS
     asyncio.create_task(updatespeaker())
-#     asyncio.create_task(loadbuffer())
     LEDS.set_led_off(0)
     LEDS.set_led_on(3)
     pressd = False
-    while True:
-        potentiometers.update()
-        p = potentiometers.get_state([40,3,1])
-        if buttons.last_pressed is not None:
-            n = buttons.last_pressed.pin
-            # if n-6 <= 2 and n-6 >= 0:
-            #     LEDS.toggle_led(2-(n-6))
-            #     #settings
-            #     pass
-            if n == 8:
-                tooggle_wave()
-            if n == 7:
-                toggle_effects()
-            elif n-9 <= 5 and n-9 >= 0:
-                frequency_module.set_value(int(pentatonik_frequencies[n-9]))
-                envelope.trigger_attack()
-                pressd = True
-                LEDS.set_led_on(2)
-                LEDS.set_led_off(1)
-        elif pressd:
-            LEDS.set_led_off(2)
-            LEDS.set_led_on(1)
-            pressd = False
-            envelope.trigger_release()
+    last_press_time = time.ticks_ms()
+    last_freq = 0
+    time_pause = 0
+    record = False
+    looping = None
+    
+    MENUE.get_modulelist(SYNTH.get_modules())
+    
+    SYNTH.output.set_amplitude(10)
 
-        SYNTH.output.set_amplitude(p[0])
+    while True:
+        for i , button in enumerate(buttons.get_buttons()):
+        
+            if button.is_pressed and not pressd:
+                time_pause = time.ticks_ms() - last_press_time
+                last_press_time = time.ticks_ms()
+                pressd = True
+
+                if i <= 4 and i >= 0:
+                    frequency_module.set_value(int(pentatonik_frequencies[i]))
+                    last_freq = int(pentatonik_frequencies[i])
+                    envelope.trigger_attack()
+                    LEDS.set_led_on(2)
+                    LEDS.set_led_off(1)
+                    if looping is None:
+                        record = True
+                        last_freq = int(pentatonik_frequencies[i])
+        
+                elif i == 5:  # Aufnahme starten/stoppen
+                    if looping is None and loop_buffer != []:  # Wenn keine Aufgabe läuft
+                        print("loop")
+                        looping = asyncio.create_task(play_loop())  # Starte die Aufgabe
+                    elif looping is not None:  # Wenn die Aufgabe läuft
+                        print("cancel")
+                        looping.cancel()
+                        await asyncio.sleep(0.05)
+                        looping = None  # Setze looping zurück
+                        loop_buffer = []
+                    else:
+                        print("kein loop")
+                elif i == 6:  # Loop abspielen
+                    pass
+
+                elif i == 7:
+                    MENUE.add_module() 
+
+                break
+                
+            elif all(button.is_released for button in buttons.get_buttons()) and pressd:
+                LEDS.set_led_off(2)
+                LEDS.set_led_on(1)
+                envelope.trigger_release()
+                pressd = False
+                time_press = time.ticks_ms() - last_press_time
+                last_press_time = time.ticks_ms()
+                if record:
+                    if len(loop_buffer) == 0:
+                        time_pause = 0
+                    record_loop(time_pause,last_freq,time_press)
+                    record = False
+
+        
+        MENUE.set_aimcross(p.get_state(0,16)*10,p.get_state(1,16)*8)
+        MENUE.set_selected_module(p.get_state(0,7))
+        
+        #SYNTH.output.set_amplitude(p.get_state(0,20)*2)
         #pentatonik_frequencies = pentatonik(notes.tones["A"+ str(2 + p[1])])
+        #frequency_module2.set_value(1+p.get_state(1,20)*40)
 
         await asyncio.sleep(0.1)  # Kurze Pause, um die Ausgabe zu steuern
 

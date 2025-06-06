@@ -2,7 +2,6 @@ from micropython import const
 import random
 import math
 import array
-from uctypes import addressof
 
 
 class Uuid():
@@ -74,10 +73,17 @@ class Synth():
         
         return module
 
+    def read(self):
+        return self.modules[0].inputs["input"].read()
+
+
     def get_buffer(self):
         output = self.modules[0].read()
         self.modules[0].reset()
         return output
+    
+    def get_modules(self):
+        return self.modules
 
 
 class SynthModule():
@@ -111,6 +117,9 @@ class SynthModule():
     
     def update(self):
         raise NotImplementedError("Subclasses should implement this method")
+    
+    def get_inputs(self):
+        return self.inputs
 
 
 class Input(SynthModule):
@@ -238,6 +247,17 @@ class Output(SynthModule):
     def set_amplitude(self, amplitude):
         self.amplitude = amplitude
     
+    # @micropython.viper
+    # def update(self):
+    #     input_buffer = ptr16(self.inputs["input"].read())
+    #     buffer_size = uint(self.base.buffer_size)
+    #     buf = ptr16(self.buffer)
+    #     amplitude = uint(self.amplitude)
+
+    #     i = uint(0)
+    #     while i < buffer_size:
+    #         buf[i] = input_buffer[i] * amplitude
+    #         i += 1
     def update(self):
         input_buffer = self.inputs["input"].read()
         for i in range(self.base.buffer_size):
@@ -251,44 +271,143 @@ class Envelope(SynthModule):
         self.decay = decay
         self.sustain = sustain
         self.release = release
-        self.state = 'idle'
-        self.value = 0.0
+
+        self.active = False
+
+        self.attack_i = 0
+        self.decay_i = 0
+        self.release_i = 0
+
+        self.attack_len = 0
+        self.decay_len = 0
+        self.release_len = 0
+
+        self.attack_lut = None
+        self.decay_lut = None
+        self.release_lut = None
+
+        self._generate_lut()
+
+    def _generate_lut(self):
+        state = 0
+        value = 0.0
+
+        attack = []
+        decay = []
+        release = []
+
+        while state != 3:
+            if state == 0:
+                value += 1.0 / (self.attack * self.base.sample_rate)
+                if value >= 1.0:
+                    value = 1.0
+                    state = 1
+                attack.append(value)
+            elif state == 1:
+                value -= (1.0 - self.sustain) / (self.decay * self.base.sample_rate)
+                if value <= self.sustain:
+                    value = self.sustain
+                    state = 2
+                decay.append(value)
+            elif state == 2:
+                value -= self.sustain / (self.release * self.base.sample_rate)
+                if value <= 0.0:
+                    value = 0.0
+                    state = 3
+                release.append(value)
+
+        def get_fixed_float(v):
+            return max(int(max(min(v, 1), 0) * 256), 0)
+
+        self.attack_lut = array.array('h', [ get_fixed_float(v) for v in attack ])
+        self.decay_lut = array.array('h', [ get_fixed_float(v) for v in decay ])
+        self.release_lut = array.array('h', [ get_fixed_float(v) for v in release ])
+
+        self.attack_len = len(self.attack_lut)
+        self.decay_len = len(self.decay_lut)
+        self.release_len = len(self.release_lut)
+        self.attack_i = self.attack_len
+        self.decay_i = self.decay_len
+        self.release_i = self.release_len
+        self.active = False
+
+    def set_attack(self, attack):
+        self.attack = attack
+    
+    def set_decay(self, decay):
+        self.decay = decay
+    
+    def set_sustain(self, sustain):
+        self.sustain = sustain
+
+    def set_release(self, release):
+        self.release = release
     
     def trigger_attack(self):
-        if self.state != 'attack':
-            self.state = 'attack'
+        if self.attack_i == self.attack_len:
+            self.attack_i = 0
+            self.decay_i = 0
+            self.active = True
     
     def trigger_release(self):
-        if self.state != 'idle':
-            self.state = 'release'
+        if self.release_i == self.release_len:
+            self.release_i = 0
 
     def is_active(self):
-        return self.state != 'idle'
+        return self.active
     
     def is_sustaining(self):
-        return self.state == 'sustain'
+        return self.attack_i == self.attack_len and self.decay_i == self.decay_len and self.release_i == self.release_len and self.active
 
+    @micropython.viper
     def update(self):
-        buffer = self.inputs["input"].read()
-        for i in range(self.base.buffer_size):
-            if self.state == 'attack':
-                self.value += 1.0 / (self.attack * self.base.sample_rate)
-                if self.value >= 1.0:
-                    self.value = 1.0
-                    self.state = 'decay'
-            elif self.state == 'decay':
-                self.value -= (1.0 - self.sustain) / (self.decay * self.base.sample_rate)
-                if self.value <= self.sustain:
-                    self.value = self.sustain
-                    self.state = 'sustain'
-            elif self.state == 'sustain':
-                pass
-            elif self.state == 'release':
-                self.value -= self.sustain / (self.release * self.base.sample_rate)
-                if self.value <= 0.0:
-                    self.value = 0.0
-                    self.state = 'idle'
-            self.buffer[i] = int(buffer[i] * self.value)
+        active = bool(self.active)
+        buf = ptr16(self.buffer)
+        buffer_size = uint(self.base.buffer_size)
+
+        if not active:
+            i = uint(0)
+            while i < buffer_size:
+                buf[i] = 0
+                i += 1
+            return
+
+        attack_i = uint(self.attack_i)
+        decay_i  = uint(self.decay_i)
+        release_i = uint(self.release_i)
+
+        attack_lut = ptr16(self.attack_lut)
+        decay_lut = ptr16(self.decay_lut)
+        release_lut = ptr16(self.release_lut)
+
+        buffer = ptr16(self.inputs["input"].read())
+        i = uint(0)
+        while i < buffer_size:
+            if attack_i < uint(self.attack_len):
+                value = attack_lut[attack_i]
+                attack_i += 1
+            elif decay_i < uint(self.decay_len):
+                value = decay_lut[decay_i]
+                decay_i += 1
+            elif release_i < uint(self.release_len):
+                value = release_lut[release_i]
+                release_i += 1
+                if release_i == uint(self.release_len):
+                    self.active = False
+            elif active:
+                value = decay_lut[uint(self.decay_len) - 1]
+           
+            if buffer[i] > 32768:
+                value = 65536 - (((65536 - buffer[i]) * value) >> 8)
+            else:
+                value = (buffer[i] * value) >> 8
+
+            buf[i] = value
+            i += 1
+
+        self.attack_i = attack_i
+        self.decay_i = decay_i
+        self.release_i = release_i
 
 
 class LowPassFilter(SynthModule):

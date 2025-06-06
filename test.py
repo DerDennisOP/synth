@@ -19,24 +19,29 @@ frequency.set_value(1)
 sine.set("frequency", frequency)
 saw.set("frequency", frequency)
 square.set("frequency", frequency)
-SYNTH.output.set("input", square)
+envelope.set("input", sine)
+lpf.set("input", sine)
+SYNTH.output.set("input", lpf)
 
-# SYNTH.get_module(mixer).add_channel(sine)
-# SYNTH.get_module(mixer).add_channel(saw)
-# SYNTH.get_module(envelope).set(mixer)
-# SYNTH.get_module(lpf).set(envelope)
+envelope.attack = 0.8
+envelope.decay = 0.8
+envelope.release = 0.8
+
 
 def messure():
     # for i in range(100):
     #     sine.read()
 
     t1 = time.time_ns()
-    for i in range(1):
+    for i in range(100):
         # x.readinto(buffer, len(buffer))
-        # x.read()
+        SYNTH.get_buffer()
+        if not envelope.is_active():
+            envelope.trigger_attack()
+        elif envelope.is_sustaining():
+            envelope.trigger_release()
         
-        print(SYNTH.get_buffer())
-        print(sine.lut)
+        # SYNTH.get_buffer()
     t2 = time.time_ns()
 
     t = (t2 - t1) / 1e9
