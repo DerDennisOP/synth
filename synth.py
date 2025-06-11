@@ -124,6 +124,9 @@ class SynthModule:
     def get_options(self):
         return []
 
+    def get_input_names(self):
+        return []
+
     def read(self):
         if not self.is_updated:
             self.update()
@@ -156,6 +159,9 @@ class Input(SynthModule):
     def __init__(self, base):
         super().__init__(base)
 
+    def get_options(self):
+        return ["value"]
+
     def set_value(self, value):
         if not isinstance(value, int):
             raise TypeError("Value must be an integer")
@@ -177,6 +183,9 @@ class Oscillator(SynthModule):
 
     def _generate_lut(self):
         raise NotImplementedError("Subclasses should implement this method")
+
+    def get_input_names(self):
+        return ["frequency"]
 
     @micropython.viper
     def update(self):
@@ -256,6 +265,15 @@ class Mixer(SynthModule):
     def __init__(self, base):
         super().__init__(base)
 
+    def get_input_names(self):
+        input_len = (
+            len([name for name in self.inputs.names() if not name.endswith("_volume")])
+            + 1
+        )
+        return [f"input{i}" for i in range(input_len)] + [
+            f"input{i}_volume" for i in range(input_len)
+        ]
+
     def update(self):
         for i in range(self.base.buffer_size):
             self.buffer[i] = 0
@@ -280,6 +298,12 @@ class Output(SynthModule):
     def __init__(self, base):
         super().__init__(base)
         self.amplitude = 1
+
+    def get_options(self):
+        return ["amplitude"]
+
+    def get_input_names(self):
+        return ["input"]
 
     def set_amplitude(self, amplitude):
         self.amplitude = amplitude
@@ -360,6 +384,12 @@ class Envelope(SynthModule):
         self.decay_i = self.decay_len
         self.release_i = self.release_len
         self.active = False
+
+    def get_options(self):
+        return ["attack", "decay", "sustain", "release"]
+
+    def get_input_names(self):
+        return ["input"]
 
     def set_attack(self, attack):
         self.attack = attack
@@ -459,6 +489,18 @@ class LowPassFilter(SynthModule):
         alpha = rc / (rc + (1.0 / self.base.sample_rate))
         self.alpha = get_fixed_float(alpha)
 
+    def get_options(self):
+        return ["cutoff"]
+
+    def get_input_names(self):
+        return ["input"]
+
+    def set_cutoff(self, cutoff):
+        if not (0 < cutoff <= self.base.sample_rate / 2):
+            raise ValueError("Cutoff frequency must be between 0 and Nyquist frequency")
+        self.cutoff = cutoff
+        self._generate_alpha()
+
     @micropython.viper
     def update(self):
         input_buffer = ptr16(self.inputs["input"].read())
@@ -471,8 +513,12 @@ class LowPassFilter(SynthModule):
 
         i = uint(0)
         while i < buffer_size:
-            # output_sample = alpha * (prev_output + input_buffer[i] - prev_input)
-            output_sample = (alpha * (prev_output + input_buffer[i] - prev_input)) >> 8
+            output_sample = prev_output + input_buffer[i] - prev_input
+            if input_buffer[i] > 32768:
+                output_sample = 65536 - (((65536 - output_sample) * alpha) >> 8)
+            else:
+                output_sample = (output_sample * alpha) >> 8
+
             prev_input = input_buffer[i]
             prev_output = int(output_sample)
             buf[i] = int(output_sample)
@@ -489,6 +535,11 @@ class Reverb(SynthModule):
         self.damp = damp
         self.mix = mix
 
+        self.roomsize_fp = 0
+        self.damp1_fp = 0
+        self.damp2_fp = 0
+        self.mix_dry = 0
+        self.mix_wet = 0
         self._set_params()
 
         self.comb_sizes = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617]
@@ -506,6 +557,12 @@ class Reverb(SynthModule):
         self.damp2_fp = 32767 - self.damp1_fp
         self.mix_dry = int((1.0 - min(self.mix * 2, 1.0)) * 32767)
         self.mix_wet = int(min(self.mix * 2, 1.0) * 32767)
+
+    def get_options(self):
+        return ["roomsize", "damp", "mix"]
+
+    def get_input_names(self):
+        return ["input"]
 
     def set_roomsize(self, roomsize):
         if not (0 <= roomsize <= 1):
@@ -531,13 +588,6 @@ class Reverb(SynthModule):
         out_buf = ptr16(self.buffer)
         n = int(self.base.buffer_size)
 
-        comb_bufs = self.comb_buffers
-        comb_idx = self.comb_indexes
-        comb_filt = self.comb_filters
-
-        ap_bufs = self.allpass_buffers
-        ap_idx = self.allpass_indexes
-
         roomsize = int(self.roomsize_fp)
         damp1 = int(self.damp1_fp)
         damp2 = int(self.damp2_fp)
@@ -550,33 +600,29 @@ class Reverb(SynthModule):
 
             comb_sum = 0
             for j in range(8):
-                b = comb_bufs[j]
-                idx = comb_idx[j]
+                b = ptr16(self.comb_buffers[j])
+                idx = uint(self.comb_indexes[j])
                 y = b[idx]
                 comb_sum += y
 
-                f = comb_filt[j]
+                f = int(self.comb_filters[j])
                 f = ((y * damp2) >> 15) + ((f * damp1) >> 15)
-                comb_filt[j] = f
+                self.comb_filters[j] = f
 
                 b[idx] = inp + ((f * roomsize) >> 15)
-                comb_idx[j] = (idx + 1) % len(b)
+                self.comb_indexes[j] = int(idx + 1) % int(len(b))
+                self.comb_buffers[j] = b
 
             out = (comb_sum * 31457) >> 17  # ~0.24 gain
 
             for j in range(4):
-                b = ap_bufs[j]
-                idx = ap_idx[j]
+                b = ptr16(self.allpass_buffers[j])
+                idx = uint(self.allpass_indexes[j])
                 y = b[idx]
                 b[idx] = out + (y >> 1)
                 out = y - out
-                ap_idx[j] = (idx + 1) % len(b)
+                self.allpass_indexes[j] = int(idx + 1) % int(len(b))
+                self.allpass_buffers[j] = b
 
             mixed = ((s * mix_dry) >> 15) + ((out * mix_wet) >> 15)
             out_buf[i] = mixed >> 1
-
-        for j in range(8):
-            self.comb_indexes[j] = comb_idx[j]
-            self.comb_filters[j] = comb_filt[j]
-        for j in range(4):
-            self.allpass_indexes[j] = ap_idx[j]

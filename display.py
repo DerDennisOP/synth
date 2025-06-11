@@ -4,6 +4,7 @@ from sysfont import sysfont
 import synth
 import array
 import random
+import math
 
 
 class Display(TFT):
@@ -37,6 +38,56 @@ class Display(TFT):
             last_pixel = current_pixel
         self.line(last_pixel, current_pixel, TFT.GREEN)
 
+    def draw_arrow(self, pos1, pos2, color):
+        self.line(pos1, pos2, color)
+
+        cos_alpha = (pos2[0] - pos1[0]) / math.sqrt(
+            (pos2[0] - pos1[0]) ** 2 + (pos2[1] - pos1[1]) ** 2
+        )
+
+        rot = math.acos(cos_alpha)
+        rot = 0
+
+        width = 2
+        height = 5
+
+        position = pos2
+        points = [
+            (position[0], position[1]),
+            (position[0] - width, position[1] - height),
+            (position[0] + width, position[1] - height),
+        ]
+
+        rotated_points = []
+        for point in points:
+            x = point[0] - position[0]
+            y = point[1] - position[1]
+            rotated_x = x * math.cos(rot) - y * math.sin(rot) + position[0]
+            rotated_y = x * math.sin(rot) + y * math.cos(rot) + position[1]
+            rotated_points.append((int(rotated_x), int(rotated_y)))
+
+        self.fillpoly(rotated_points, color)
+
+    def fillpoly(self, positions, color):
+        min_x = min(pos[0] for pos in positions)
+        max_x = max(pos[0] for pos in positions)
+        min_y = min(pos[1] for pos in positions)
+        max_y = max(pos[1] for pos in positions)
+
+        for x in range(min_x, max_x + 1):
+            for y in range(min_y, max_y + 1):
+                # calculate if point in polygon
+                for i in range(len(positions)):
+                    j = (i + 1) % len(positions)
+                    if (positions[i][1] > y) != (positions[j][1] > y) and (
+                        x
+                        < (positions[j][0] - positions[i][0])
+                        * (y - positions[i][1])
+                        / (positions[j][1] - positions[i][1])
+                        + positions[i][0]
+                    ):
+                        self.pixel((x, y), color)
+
 
 class Window:
     def __init__(self, synth_instance):
@@ -46,14 +97,18 @@ class Window:
         # Module_Menu
         # New_Module_Menu
         # Module_map
+        # Module_settings
         self.display_state = "Module_map"
         self.size = [160, 128]
         self.update_buffer = False
         self.aim_cross = [0, 0]
         self.synth = synth_instance
         self.selected_module = 0
+        self.selectet_module_id = ""
         self.change_module = True
         self.init_menu = False
+        self.steps = 7
+        self.module_map_pos = {}
         self.all_modules = {
             "Input": synth.Input,
             "Sine": synth.Sine,
@@ -63,6 +118,7 @@ class Window:
             "Mixer": synth.Mixer,
             "Envelope": synth.Envelope,
             "LowPassFilter": synth.LowPassFilter,
+            "Reverb": synth.Reverb,
         }
 
         self.color_legend = {
@@ -75,6 +131,7 @@ class Window:
             "Envelope": self.tft.color(138, 43, 226),
             "LowPassFilter": self.tft.BLUE,
             "Output": self.tft.RED,
+            "Reverb": self.tft.WHITE,
         }
 
     def display(self):
@@ -87,13 +144,19 @@ class Window:
                 self.modules_menu()
             elif self.display_state == "New_Module_Menu":
                 if not self.init_menu:
-                    self.new_module_menu()
+                    self.draw_str_list(self.all_modules.keys())
                     self.init_menu = True
+                    self.steps = len(self.add_modules)
                 self.select_new_menu()
             elif self.display_state == "Module_map":
                 if not self.init_menu and self.modules() != []:
                     self.draw_module_map()
                     self.init_menu = True
+            elif self.display_state == "Module_settings":
+                if not self.init_menu:
+                    self.init_menu = True
+                    self.module_settings(self.selectet_module_id)
+                self.select_new_menu()
 
     def set_buffer(self, buffer):
         if not self.update_buffer:
@@ -119,11 +182,6 @@ class Window:
     def delete_module(self, module):
         del self.synth.modules[module.id]
 
-    def new_module_menu(self, pos=10, distance=10, margin=10):
-        for i, all_modules in enumerate(self.all_modules.keys()):
-            f = (i + 1) * distance
-            self.tft.text((margin, pos + 1 * f), all_modules, TFT.WHITE, sysfont)
-
     def select_new_menu(self, pos=10, distance=10, margin=10, circle_size_prozent=0.25):
         f = self.selected_module + 1
         circle_pos = (
@@ -135,24 +193,14 @@ class Window:
             self.tft.fillcircle(circle_pos, distance * circle_size_prozent, TFT.WHITE)
             self.change_module = False
 
-    def set_selected_module(self, selected_module):
+    def set_selected_module(self, pot_v, maxV=3.3):
+        selected_module = round(self.steps / maxV * pot_v)
         if selected_module != self.selected_module:
             self.change_module = True
             self.selected_module = selected_module
 
     def set_aimcross(self, x_potstate, y_potsate):
         self.aim_cross = [x_potstate, y_potsate]
-
-    def modules_menu(self):
-        self.tft.clear()
-        print(self.aim_cross)
-        self.tft.line(
-            [self.aim_cross[0], 0], [self.aim_cross[0], self.size[1]], TFT.RED
-        )
-        self.tft.line(
-            [0, self.aim_cross[1]], [self.size[0], self.aim_cross[1]], TFT.RED
-        )
-        self.tft.circle([self.aim_cross[0], self.aim_cross[1]], 10, TFT.RED)
 
     def contains_all(self, module_i, ueberpruef_dic):
         print(ueberpruef_dic)
@@ -183,10 +231,9 @@ class Window:
                         last_len_seen = len(seen)
 
         grid_size = (len(switches), max_y)
-        print(grid_size)
         layer = 0
         grid_y = 0
-        pos = {}
+        self.module_map_pos = {}
 
         for i, module in enumerate(self.modules()):
             if i in switches:
@@ -196,23 +243,41 @@ class Window:
             x = (self.size[0] / grid_size[0]) * (layer + 1)
             y = (self.size[1] / grid_size[1]) * (grid_y + 1)
 
-            pos[str(module.get_id())] = (int(x), int(y))
+            self.module_map_pos[str(module.get_id())] = (int(x), int(y))
             grid_y += 1
 
         for module in self.modules():
             for m in module.get_inputs().values():
-                if str(m.get_id()) in pos:
-                    self.tft.line(
-                        pos[str(module.get_id())], pos[str(m.get_id())], self.tft.WHITE
+                if str(m.get_id()) in self.module_map_pos:
+                    self.tft.draw_arrow(
+                        self.module_map_pos[str(m.get_id())],
+                        self.module_map_pos[str(module.get_id())],
+                        self.tft.WHITE,
                     )
 
-        for module in self.modules():
-            self.tft.fillcircle(
-                pos[str(module.get_id())], rad, self.color_legend[type(module).__name__]
-            )
+        # for module in self.modules():
+        #     self.tft.fillcircle(
+        #         self.module_map_pos[str(module.get_id())],
+        #         rad,
+        #         self.color_legend[type(module).__name__],
+        #     )
+
+        print(self.module_map_pos)
+
+    def select_module_in_map(self):
+        pass
 
     def module_settings(self, id):
-        module.__call__(f"set_{name}", value)
+        options = self.modules()[id].get_opions()
+        self.draw_str_list(options)
+
+        self.steps = len[options]
+        # module.__call__(f"set_{name}", value)
+
+    def draw_str_list(self, list, pos=10, distance=10, margin=10):
+        for i, text in enumerate(list):
+            f = (i + 1) * distance
+            self.tft.text((margin, pos + 1 * f), str(text), TFT.WHITE, sysfont)
 
     def get_menu_state(self):
         return self.display_state

@@ -35,6 +35,7 @@ sine = SYNTH.add_module(synth.Sine)
 mixer = SYNTH.add_module(synth.Mixer)
 envelope = SYNTH.add_module(synth.Envelope)
 lpf = SYNTH.add_module(synth.LowPassFilter)
+reverb = SYNTH.add_module(synth.Reverb)
 ak_wave = 0
 ak_effect = 0
 loop_buffer = []
@@ -54,9 +55,9 @@ sine.set("frequency", frequency_module)
 # square.set("frequency", frequency_module)
 # triangle.set("frequency", frequency_module)
 
-mixer.set("0", sine)
-mixer.set("1", base_sine)
-mixer.set("1_volume", volume_sine)
+mixer.set("input0", sine)
+mixer.set("input1", base_sine)
+mixer.set("input1_volume", volume_sine)
 # mixer.set("2", mixer2)
 # mixer2.set("0", mixer3)
 # mixer3.set("0", mixer4)
@@ -65,8 +66,9 @@ mixer.set("1_volume", volume_sine)
 # mixer6.set("0", saw)
 # SYNTH.get_module(mixer).add_channel(saw)
 envelope.set("input", mixer)
-lpf.set("input", envelope)
-SYNTH.output.set("input", lpf)
+reverb.set("input", envelope)
+# lpf.set("input", envelope)
+SYNTH.output.set("input", reverb)
 
 
 _thread.start_new_thread(MENUE.display, ())
@@ -80,6 +82,8 @@ async def updatespeaker():
         if MENUE.display_state == "Graph":
             MENUE.set_buffer(SYNTH.read())
         next_buffer = SYNTH.get_buffer()
+        # print(sine.read())
+        # print(next_buffer)
         await stream.drain()
         stream.write(next_buffer)
 
@@ -187,8 +191,7 @@ async def main():
                     record_loop(time_pause, last_freq, time_press)
                     record = False
 
-        MENUE.set_aimcross(p.get_state(0, 16) * 10, p.get_state(1, 16) * 8)
-        MENUE.set_selected_module(p.get_state(0, 7))
+        MENUE.set_selected_module(p.get_V(0))
 
         # SYNTH.output.set_amplitude(p.get_state(0,20)*2)
         # pentatonik_frequencies = pentatonik(notes.tones["A"+ str(2 + p[1])])
