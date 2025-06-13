@@ -66,7 +66,7 @@ mixer.set("input1_volume", volume_sine)
 # mixer6.set("0", saw)
 # SYNTH.get_module(mixer).add_channel(saw)
 envelope.set("input", mixer)
-reverb.set("input", envelope)
+reverb.set("input", sine)
 # lpf.set("input", envelope)
 SYNTH.output.set("input", reverb)
 
@@ -136,7 +136,7 @@ async def main():
     record = False
     looping = None
 
-    SYNTH.output.set_amplitude(10)
+    SYNTH.output.set_amplitude(0)
 
     while True:
         for i, button in enumerate(buttons.get_buttons()):
@@ -191,7 +191,7 @@ async def main():
                     record_loop(time_pause, last_freq, time_press)
                     record = False
 
-        MENUE.set_selected_module(p.get_V(0))
+        MENUE.get_pot_states(p.get_V())
 
         # SYNTH.output.set_amplitude(p.get_state(0,20)*2)
         # pentatonik_frequencies = pentatonik(notes.tones["A"+ str(2 + p[1])])

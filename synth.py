@@ -93,14 +93,15 @@ class Synth:
         return self.modules
 
     def sort_modules(self):
-        visited = {str(m.get_id()): False for m in self.modules}
+        modules = self.modules[:]
+        visited = {str(m.get_id()): False for m in modules}
         stack = []
 
-        for m in self.modules:
+        for m in modules:
             if not visited[str(m.get_id())]:
                 self.sort_modules_util(m, visited, stack)
 
-        self.modules = stack
+        return stack
 
     def sort_modules_util(self, module, visited, stack):
         visited[str(module.get_id())] = True
@@ -529,8 +530,8 @@ class LowPassFilter(SynthModule):
 
 
 class Reverb(SynthModule):
-    def init(self, base, roomsize=0.5, damp=0.5, mix=0.5):
-        super().init(base)
+    def __init__(self, base, roomsize=0.5, damp=0.5, mix=0.5):
+        super().__init__(base)
         self.roomsize = roomsize
         self.damp = damp
         self.mix = mix
@@ -543,20 +544,20 @@ class Reverb(SynthModule):
         self._set_params()
 
         self.comb_sizes = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617]
-        self.comb_buffers = [array("h", [0] * s) for s in self.comb_sizes]
+        self.comb_buffers = [array.array("h", [0] * s) for s in self.comb_sizes]
         self.comb_indexes = [0] * 8
         self.comb_filters = [0] * 8
 
         self.allpass_sizes = [556, 441, 341, 225]
-        self.allpass_buffers = [array("h", [0] * s) for s in self.allpass_sizes]
+        self.allpass_buffers = [array.array("h", [0] * s) for s in self.allpass_sizes]
         self.allpass_indexes = [0] * 4
 
     def _set_params(self):
         self.roomsize_fp = int(self.roomsize * 32767)
         self.damp1_fp = int(self.damp * 32767)
         self.damp2_fp = 32767 - self.damp1_fp
-        self.mix_dry = int((1.0 - min(self.mix * 2, 1.0)) * 32767)
-        self.mix_wet = int(min(self.mix * 2, 1.0) * 32767)
+        self.mix_dry = int((1.0 - self.mix) * 32767)
+        self.mix_wet = int(self.mix * 32767)
 
     def get_options(self):
         return ["roomsize", "damp", "mix"]
@@ -585,8 +586,8 @@ class Reverb(SynthModule):
     @micropython.viper
     def update(self):
         input_buf = ptr16(self.inputs["input"].read())
-        out_buf = ptr16(self.buffer)
-        n = int(self.base.buffer_size)
+        buffer_size = uint(self.base.buffer_size)
+        buf = ptr16(self.buffer)
 
         roomsize = int(self.roomsize_fp)
         damp1 = int(self.damp1_fp)
@@ -594,12 +595,13 @@ class Reverb(SynthModule):
         mix_dry = int(self.mix_dry)
         mix_wet = int(self.mix_wet)
 
-        for i in range(n):
-            s = int(input_buf[i])
-            inp = (s * 8738) >> 15  # scale input ~0.266
+        i = uint(0)
+        while i < buffer_size:
+            inp = int(input_buf[i])
 
-            comb_sum = 0
-            for j in range(8):
+            comb_sum = 1
+            j = uint(0)
+            while j < uint(8):
                 b = ptr16(self.comb_buffers[j])
                 idx = uint(self.comb_indexes[j])
                 y = b[idx]
@@ -610,19 +612,37 @@ class Reverb(SynthModule):
                 self.comb_filters[j] = f
 
                 b[idx] = inp + ((f * roomsize) >> 15)
-                self.comb_indexes[j] = int(idx + 1) % int(len(b))
-                self.comb_buffers[j] = b
+                self.comb_indexes[j] = int(idx + 1) % int(self.comb_sizes[j])
+                j += 1
 
             out = (comb_sum * 31457) >> 17  # ~0.24 gain
 
-            for j in range(4):
-                b = ptr16(self.allpass_buffers[j])
-                idx = uint(self.allpass_indexes[j])
-                y = b[idx]
-                b[idx] = out + (y >> 1)
-                out = y - out
-                self.allpass_indexes[j] = int(idx + 1) % int(len(b))
-                self.allpass_buffers[j] = b
+            # j = uint(0)
+            # while j < uint(4):
+            #     b = ptr16(self.allpass_buffers[j])
+            #     idx = uint(self.allpass_indexes[j])
+            #     y = b[idx]
+            #     b[idx] = out + (y >> 1)
+            #     out = y - out
+            #     self.allpass_indexes[j] = int(idx + 1) % int(self.allpass_sizes[j])
+            #     self.allpass_buffers[j] = b
+            #     j += 1
 
-            mixed = ((s * mix_dry) >> 15) + ((out * mix_wet) >> 15)
-            out_buf[i] = mixed >> 1
+            # mixed = (s * mix_dry) >> 16  # + ((out * mix_wet) >> 15)
+
+            # if inp > 32768:
+            #     mixed = 65536 - (((65536 - inp) * mix_dry) >> 15)
+            # else:
+            #     mixed = (inp * mix_dry) >> 15
+
+            # mixed = 0
+            if out > 32768:
+                mixed = 65536 - (((65536 - out) * mix_wet) >> 15)
+            else:
+                mixed = (out * mix_wet) >> 15
+
+            buf[i] = input_buf[i]
+            # buf[i] = mixed
+            # print(out)
+            # print(mixed)
+            i += 1

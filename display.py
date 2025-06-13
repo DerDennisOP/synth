@@ -45,11 +45,10 @@ class Display(TFT):
             (pos2[0] - pos1[0]) ** 2 + (pos2[1] - pos1[1]) ** 2
         )
 
-        rot = math.acos(cos_alpha)
-        rot = 0
+        rot = -math.acos(cos_alpha) - (math.pi / 2)
 
-        width = 2
-        height = 5
+        width = 4
+        height = 16
 
         position = pos2
         points = [
@@ -74,19 +73,21 @@ class Display(TFT):
         min_y = min(pos[1] for pos in positions)
         max_y = max(pos[1] for pos in positions)
 
-        for x in range(min_x, max_x + 1):
-            for y in range(min_y, max_y + 1):
-                # calculate if point in polygon
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                inside = False
                 for i in range(len(positions)):
                     j = (i + 1) % len(positions)
-                    if (positions[i][1] > y) != (positions[j][1] > y) and (
-                        x
-                        < (positions[j][0] - positions[i][0])
-                        * (y - positions[i][1])
-                        / (positions[j][1] - positions[i][1])
-                        + positions[i][0]
-                    ):
-                        self.pixel((x, y), color)
+                    xi, yi = positions[i]
+                    xj, yj = positions[j]
+
+                    if (yi > y) != (yj > y):
+                        intersect_x = (xj - xi) * (y - yi) / (yj - yi + 1e-10) + xi
+                        if x < intersect_x:
+                            inside = not inside
+
+                if inside:
+                    self.pixel((x, y), color)
 
 
 class Window:
@@ -101,14 +102,15 @@ class Window:
         self.display_state = "Module_map"
         self.size = [160, 128]
         self.update_buffer = False
-        self.aim_cross = [0, 0]
         self.synth = synth_instance
         self.selected_module = 0
         self.selectet_module_id = ""
-        self.change_module = True
         self.init_menu = False
-        self.steps = 7
+        self.steps = [10, 10, 10]
+        self.pot_states = [0, 0, 0]
+        self.grid_pos = []
         self.module_map_pos = {}
+        self.module_map_grid = []
         self.all_modules = {
             "Input": synth.Input,
             "Sine": synth.Sine,
@@ -146,12 +148,13 @@ class Window:
                 if not self.init_menu:
                     self.draw_str_list(self.all_modules.keys())
                     self.init_menu = True
-                    self.steps = len(self.add_modules)
+                    self.steps[0] = len(self.all_modules)
                 self.select_new_menu()
             elif self.display_state == "Module_map":
                 if not self.init_menu and self.modules() != []:
                     self.draw_module_map()
                     self.init_menu = True
+                # self.select_module_in_map()
             elif self.display_state == "Module_settings":
                 if not self.init_menu:
                     self.init_menu = True
@@ -183,42 +186,29 @@ class Window:
         del self.synth.modules[module.id]
 
     def select_new_menu(self, pos=10, distance=10, margin=10, circle_size_prozent=0.25):
-        f = self.selected_module + 1
-        circle_pos = (
-            margin - distance * circle_size_prozent,
-            pos + distance * circle_size_prozent * 1 + distance * f,
-        )
-        if self.change_module == True:
+        if self.selected_module != self.pot_states[0]:
+            self.selected_module = self.pot_states[0]
+            f = self.selected_module + 1
+            circle_pos = (
+                margin - distance * circle_size_prozent,
+                pos + distance * circle_size_prozent * 1 + distance * f,
+            )
+
             self.tft.fillrect((0, 0), (margin, self.size[1]), TFT.BLACK)
             self.tft.fillcircle(circle_pos, distance * circle_size_prozent, TFT.WHITE)
-            self.change_module = False
 
-    def set_selected_module(self, pot_v, maxV=3.3):
-        selected_module = round(self.steps / maxV * pot_v)
-        if selected_module != self.selected_module:
-            self.change_module = True
-            self.selected_module = selected_module
-
-    def set_aimcross(self, x_potstate, y_potsate):
-        self.aim_cross = [x_potstate, y_potsate]
-
-    def contains_all(self, module_i, ueberpruef_dic):
-        print(ueberpruef_dic)
-        for m in module_i.values():
-            key = str(m.get_id())
-            print(key)
-            if key not in ueberpruef_dic:
-                return False
-        return True
+    def get_pot_states(self, pots, max_v=3.3):
+        for i, pot in enumerate(pots):
+            self.pot_states[i] = round(self.steps[i] / max_v * pot)
 
     def draw_module_map(self, rad=4):
-        self.synth.sort_modules()
+        sorted_modules = self.synth.sort_modules()
         max_y = 0
         last_len_seen = 0
         switches = []
         seen = []
 
-        for i, module in enumerate(self.modules()):
+        for i, module in enumerate(sorted_modules):
             seen.append(str(module.get_id()))
             if i == 0:
                 continue
@@ -235,7 +225,7 @@ class Window:
         grid_y = 0
         self.module_map_pos = {}
 
-        for i, module in enumerate(self.modules()):
+        for i, module in enumerate(sorted_modules):
             if i in switches:
                 layer += 1
                 grid_y = 0
@@ -246,7 +236,7 @@ class Window:
             self.module_map_pos[str(module.get_id())] = (int(x), int(y))
             grid_y += 1
 
-        for module in self.modules():
+        for module in sorted_modules:
             for m in module.get_inputs().values():
                 if str(m.get_id()) in self.module_map_pos:
                     self.tft.draw_arrow(
@@ -255,23 +245,24 @@ class Window:
                         self.tft.WHITE,
                     )
 
-        # for module in self.modules():
-        #     self.tft.fillcircle(
-        #         self.module_map_pos[str(module.get_id())],
-        #         rad,
-        #         self.color_legend[type(module).__name__],
-        #     )
+        for module in sorted_modules:
+            self.tft.fillcircle(
+                self.module_map_pos[str(module.get_id())],
+                rad,
+                self.color_legend[type(module).__name__],
+            )
 
-        print(self.module_map_pos)
+        self.steps_pot2, self.steps_pot3 = self.create_position_grid()
 
-    def select_module_in_map(self):
-        pass
+    def select_module_in_map(self, pot1, pot2):
+        if self.grid_pos != pos:
+            self.selectet_module_id()
 
     def module_settings(self, id):
         options = self.modules()[id].get_opions()
         self.draw_str_list(options)
 
-        self.steps = len[options]
+        self.steps_pot3 = len[options]
         # module.__call__(f"set_{name}", value)
 
     def draw_str_list(self, list, pos=10, distance=10, margin=10):
@@ -284,3 +275,33 @@ class Window:
 
     def loop_menu(self):
         pass
+
+    def create_position_grid(self):
+        unique_x = set()
+        unique_y = set()
+
+        for pos in self.module_map_pos.values():
+            unique_x.add(pos[0])
+            unique_y.add(pos[1])
+
+        max_x = len(unique_x)
+        max_y = len(unique_y)
+
+        grid = [[0 for _ in range(max_y)] for _ in range(max_x)]
+
+        sorted_x = sorted(unique_x)
+        sorted_y = sorted(unique_y)
+
+        x_index = {value: index for index, value in enumerate(sorted_x)}
+        y_index = {value: index for index, value in enumerate(sorted_y)}
+
+        for pos in self.module_map_pos.values():
+            grid_x = x_index[pos[0]]
+            grid_y = y_index[pos[1]]
+            grid[grid_x][grid_y] = 1
+
+        self.module_map_grid = grid
+
+        print(grid)
+
+        return max_x, max_y
