@@ -35,7 +35,8 @@ sine = SYNTH.add_module(synth.Sine)
 mixer = SYNTH.add_module(synth.Mixer)
 envelope = SYNTH.add_module(synth.Envelope)
 lpf = SYNTH.add_module(synth.LowPassFilter)
-reverb = SYNTH.add_module(synth.Reverb)
+hpf = SYNTH.add_module(synth.HighPassFilter)
+noise = SYNTH.add_module(synth.Noise)
 ak_wave = 0
 ak_effect = 0
 loop_buffer = []
@@ -66,9 +67,9 @@ mixer.set("input1_volume", volume_sine)
 # mixer6.set("0", saw)
 # SYNTH.get_module(mixer).add_channel(saw)
 envelope.set("input", mixer)
-reverb.set("input", sine)
-# lpf.set("input", envelope)
-SYNTH.output.set("input", reverb)
+lpf.set("input", envelope)
+hpf.set("input", envelope)
+SYNTH.output.set("input", hpf)
 
 
 _thread.start_new_thread(MENUE.display, ())
@@ -136,7 +137,7 @@ async def main():
     record = False
     looping = None
 
-    SYNTH.output.set_amplitude(0)
+    SYNTH.output.set_amplitude(10)
 
     while True:
         for i, button in enumerate(buttons.get_buttons()):

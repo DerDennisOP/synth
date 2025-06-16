@@ -99,39 +99,44 @@ class Window:
         # New_Module_Menu
         # Module_map
         # Module_settings
-        self.display_state = "Module_map"
+        self.display_state = "Graph"
         self.size = [160, 128]
         self.update_buffer = False
         self.synth = synth_instance
         self.selected_module = 0
         self.selectet_module_id = ""
         self.init_menu = False
-        self.steps = [10, 10, 10]
+        self.steps = [0, 0, 0]
         self.pot_states = [0, 0, 0]
-        self.grid_pos = []
         self.module_map_pos = {}
         self.module_map_grid = []
         self.all_modules = {
             "Input": synth.Input,
+            "Noise": synth.Noise,
             "Sine": synth.Sine,
             "Square": synth.Square,
             "Triangle": synth.Triangle,
             "Sawtooth": synth.Sawtooth,
             "Mixer": synth.Mixer,
+            "PitchShifter": synth.PitchShifter,
             "Envelope": synth.Envelope,
             "LowPassFilter": synth.LowPassFilter,
+            "HighPassFilter": synth.HighPassFilter,
             "Reverb": synth.Reverb,
         }
 
         self.color_legend = {
             "Input": self.tft.GREEN,
+            "Noise": self.tft.color(0, 50, 100),
             "Sine": self.tft.color(0, 204, 204),
             "Square": self.tft.color(0, 204, 204),
             "Triangle": self.tft.color(0, 204, 204),
             "Sawtooth": self.tft.color(0, 204, 204),
             "Mixer": self.tft.YELLOW,
+            "PitchShifter": self.tft.color(255, 165, 0),
             "Envelope": self.tft.color(138, 43, 226),
             "LowPassFilter": self.tft.BLUE,
+            "HighPassFilter": self.tft.color(0, 20, 255),
             "Output": self.tft.RED,
             "Reverb": self.tft.WHITE,
         }
@@ -154,7 +159,7 @@ class Window:
                 if not self.init_menu and self.modules() != []:
                     self.draw_module_map()
                     self.init_menu = True
-                # self.select_module_in_map()
+                self.select_module_in_map()
             elif self.display_state == "Module_settings":
                 if not self.init_menu:
                     self.init_menu = True
@@ -223,7 +228,7 @@ class Window:
         grid_size = (len(switches), max_y)
         layer = 0
         grid_y = 0
-        self.module_map_pos = {}
+        pos = {}
 
         for i, module in enumerate(sorted_modules):
             if i in switches:
@@ -233,12 +238,14 @@ class Window:
             x = (self.size[0] / grid_size[0]) * (layer + 1)
             y = (self.size[1] / grid_size[1]) * (grid_y + 1)
 
-            self.module_map_pos[str(module.get_id())] = (int(x), int(y))
+            pos[str(module.get_id())] = (int(x), int(y))
             grid_y += 1
+
+        self.module_map_pos = pos
 
         for module in sorted_modules:
             for m in module.get_inputs().values():
-                if str(m.get_id()) in self.module_map_pos:
+                if str(m.get_id()) in pos:
                     self.tft.draw_arrow(
                         self.module_map_pos[str(m.get_id())],
                         self.module_map_pos[str(module.get_id())],
@@ -252,11 +259,20 @@ class Window:
                 self.color_legend[type(module).__name__],
             )
 
-        self.steps_pot2, self.steps_pot3 = self.create_position_grid()
+        self.steps[0], self.steps[1] = self.create_position_grid()
 
-    def select_module_in_map(self, pot1, pot2):
-        if self.grid_pos != pos:
-            self.selectet_module_id()
+    def select_module_in_map(self, rad=4):
+        m_id = self.module_map_grid[self.pot_states[0]][self.pot_states[1]]
+        if self.selectet_module_id != m_id:
+            if m_id != "":
+                if self.selectet_module_id != "":
+                    self.tft.fillcircle(
+                        self.module_map_pos[self.selectet_module_id],
+                        rad,
+                        self.tft.RED,
+                    )
+                self.tft.fillcircle(self.module_map_pos[m_id], rad, self.tft.WHITE)
+            self.selectet_module_id = m_id
 
     def module_settings(self, id):
         options = self.modules()[id].get_opions()
@@ -287,7 +303,7 @@ class Window:
         max_x = len(unique_x)
         max_y = len(unique_y)
 
-        grid = [[0 for _ in range(max_y)] for _ in range(max_x)]
+        grid = [["" for _ in range(max_y)] for _ in range(max_x)]
 
         sorted_x = sorted(unique_x)
         sorted_y = sorted(unique_y)
@@ -295,13 +311,13 @@ class Window:
         x_index = {value: index for index, value in enumerate(sorted_x)}
         y_index = {value: index for index, value in enumerate(sorted_y)}
 
-        for pos in self.module_map_pos.values():
+        for key, pos in self.module_map_pos.items():
             grid_x = x_index[pos[0]]
             grid_y = y_index[pos[1]]
-            grid[grid_x][grid_y] = 1
+            grid[grid_x][grid_y] = key
 
         self.module_map_grid = grid
 
         print(grid)
 
-        return max_x, max_y
+        return max_x - 1, max_y - 1

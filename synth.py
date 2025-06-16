@@ -262,6 +262,104 @@ class Sawtooth(Oscillator):
                 self.lut[i] = -self.lut[i]
 
 
+class Noise(SynthModule):
+    def __init__(self, base):
+        super().__init__(base)
+        self.index = 0
+        self.lut_amount = const(1024)
+        self.lut = array.array("h", [0] * self.lut_amount)
+        self.type = "white"
+        self._generate_lut()
+
+    def _generate_lut(self):
+        if self.type == "white":
+            for i in range(self.lut_amount):
+                self.lut[i] = random.randint(-self.base.max, self.base.max)
+        elif self.type == "pink":
+            num_rows = 16
+            rows = [random.randint(0, self.base.max) for _ in range(num_rows)]
+            for i in range(self.lut_amount):
+                sum_noise = sum(rows[j] for j in range(num_rows))
+                self.lut[i] = int(sum_noise / num_rows)
+                rows[random.randint(0, num_rows - 1)] = random.randint(
+                    -self.base.max, self.base.max
+                )
+        elif self.type == "red":
+            for i in range(self.lut_amount):
+                if i == 0:
+                    self.lut[i] = random.randint(-self.base.max, self.base.max)
+                else:
+                    self.lut[i] = int(
+                        (
+                            self.lut[i - 1]
+                            + random.randint(-self.base.max, self.base.max)
+                        )
+                        / 2
+                    )
+        elif self.type == "violet":
+            for i in range(self.lut_amount):
+                self.lut[i] = int(self.base.max * (1 - (2 * i / self.lut_amount) ** 2))
+        elif self.type == "blue":
+            for i in range(self.lut_amount):
+                self.lut[i] = (
+                    int(self.base.max * (2 * i / self.lut_amount - 1))
+                    if i < self.lut_amount // 2
+                    else -int(self.base.max * (2 * (i / self.lut_amount) - 1))
+                )
+        elif self.type == "gray":
+            for i in range(self.lut_amount):
+                self.lut[i] = int(self.base.max * (1 - (2 * i / self.lut_amount) ** 2))
+        elif self.type == "black":
+            for i in range(self.lut_amount):
+                if i == 0:
+                    self.lut[i] = random.randint(-self.base.max, self.base.max)
+                else:
+                    self.lut[i] = int(
+                        (
+                            self.lut[i - 1]
+                            + random.randint(-self.base.max, self.base.max)
+                        )
+                        / 2
+                    )
+        else:
+            raise ValueError(f"Unknown noise type: {self.type}")
+
+    def get_options(self):
+        return ["type"]
+
+    def get_input_names(self):
+        return []
+
+    def set_type(self, noise_type):
+        if noise_type not in [
+            "white",
+            "pink",
+            "red",
+            "violet",
+            "blue",
+            "gray",
+            "black",
+        ]:
+            raise ValueError("Noise type must be 'white' or 'pink'")
+        self.type = noise_type
+
+    @micropython.viper
+    def update(self):
+        idx = uint(self.index)
+        buffer_size = uint(self.base.buffer_size)
+        buffer = ptr16(self.buffer)
+        increment = uint((int(self.lut_amount) << 16) // int(self.base.sample_rate))
+        lut = ptr16(self.lut)
+        mod = uint(self.lut_amount) - 1
+        i = uint(0)
+        while i < buffer_size:
+            buffer[i] = lut[(idx >> 16) & mod]
+            idx += increment
+            i += 1
+
+        self.index = idx
+
+
 class Mixer(SynthModule):
     def __init__(self, base):
         super().__init__(base)
@@ -318,8 +416,55 @@ class Output(SynthModule):
 
         i = uint(0)
         while i < buffer_size:
-            buf[i] = input_buffer[i] * amplitude
+            out = input_buffer[i] * amplitude
+            if out > 32768:
+                buf[i] = 32768
+            else:
+                buf[i] = out
             i += 1
+
+
+class PitchShifter(SynthModule):
+    def __init__(self, base):
+        super().__init__(base)
+        self.pitch = 1.0
+        self.index = 0
+        self.lut_amount = const(1024)
+        self.lut = array.array("h", [0] * self.lut_amount)
+        self._generate_lut()
+
+    def _generate_lut(self):
+        for i in range(self.lut_amount):
+            self.lut[i] = int(
+                self.base.max * math.sin(2 * math.pi * i / self.lut_amount)
+            )
+
+    def get_options(self):
+        return ["pitch"]
+
+    def get_input_names(self):
+        return ["input"]
+
+    def set_pitch(self, pitch):
+        if not (0 < pitch <= 2):
+            raise ValueError("Pitch must be between 0 and 2")
+        self.pitch = pitch
+
+    @micropython.viper
+    def update(self):
+        idx = uint(self.index)
+        buffer_size = uint(self.base.buffer_size)
+        buffer = ptr16(self.buffer)
+        increment = uint((int(self.lut_amount) << 16) // int(self.base.sample_rate))
+        lut = ptr16(self.lut)
+        mod = uint(self.lut_amount) - 1
+        i = uint(0)
+        while i < buffer_size:
+            buffer[i] = lut[(idx >> 16) & mod]
+            idx += increment * int(self.pitch)
+            i += 1
+
+        self.index = idx
 
 
 class Envelope(SynthModule):
@@ -529,6 +674,59 @@ class LowPassFilter(SynthModule):
         self.prev_output = prev_output
 
 
+class HighPassFilter(SynthModule):
+    def __init__(self, base, cutoff=1000.0):
+        super().__init__(base)
+        self.cutoff = cutoff
+        self.prev_input = 0
+        self.prev_output = 0
+        self.alpha = 0
+        self._generate_alpha()
+
+    def _generate_alpha(self):
+        rc = 1.0 / (2 * math.pi * self.cutoff)
+        alpha = rc / (rc + (1.0 / self.base.sample_rate))
+        self.alpha = get_fixed_float(alpha)
+
+    def get_options(self):
+        return ["cutoff"]
+
+    def get_input_names(self):
+        return ["input"]
+
+    def set_cutoff(self, cutoff):
+        if not (0 < cutoff <= self.base.sample_rate / 2):
+            raise ValueError("Cutoff frequency must be between 0 and Nyquist frequency")
+        self.cutoff = cutoff
+        self._generate_alpha()
+
+    @micropython.viper
+    def update(self):
+        input_buffer = ptr16(self.inputs["input"].read())
+        buffer_size = uint(self.base.buffer_size)
+        buf = ptr16(self.buffer)
+        alpha = uint(self.alpha)
+
+        prev_input = int(self.prev_input)
+        prev_output = int(self.prev_output)
+
+        i = uint(0)
+        while i < buffer_size:
+            output_sample = input_buffer[i] - prev_input + (prev_output * alpha >> 8)
+            if output_sample > 32768:
+                output_sample = 65536 - (((65536 - output_sample) * alpha) >> 8)
+            else:
+                output_sample = (output_sample * alpha) >> 8
+
+            prev_input = input_buffer[i]
+            prev_output = int(output_sample)
+            buf[i] = int(output_sample)
+            i += 1
+
+        self.prev_input = prev_input
+        self.prev_output = prev_output
+
+
 class Reverb(SynthModule):
     def __init__(self, base, roomsize=0.5, damp=0.5, mix=0.5):
         super().__init__(base)
@@ -608,41 +806,58 @@ class Reverb(SynthModule):
                 comb_sum += y
 
                 f = int(self.comb_filters[j])
-                f = ((y * damp2) >> 15) + ((f * damp1) >> 15)
-                self.comb_filters[j] = f
+                if y > 32768:
+                    f1 = 65536 - ((65536 - y) * damp2) >> 15
+                else:
+                    f1 = (y * damp2) >> 15
 
-                b[idx] = inp + ((f * roomsize) >> 15)
+                if f > 32768:
+                    f2 = 65536 - ((65536 - f) * damp1) >> 15
+                else:
+                    f2 = (f * damp1) >> 15
+
+                self.comb_filters[j] = f1 + f2
+
+                if f > 32768:
+                    f3 = 65536 - ((65536 - f) * roomsize) >> 15
+                else:
+                    f3 = (f * roomsize) >> 15
+
+                b[idx] = inp + f3
                 self.comb_indexes[j] = int(idx + 1) % int(self.comb_sizes[j])
                 j += 1
 
-            out = (comb_sum * 31457) >> 17  # ~0.24 gain
+            if comb_sum > 32768:
+                out = 65536 - (((65536 - comb_sum) * 31457) >> 17)
+            else:
+                out = (comb_sum * 31457) >> 17
 
-            # j = uint(0)
-            # while j < uint(4):
-            #     b = ptr16(self.allpass_buffers[j])
-            #     idx = uint(self.allpass_indexes[j])
-            #     y = b[idx]
-            #     b[idx] = out + (y >> 1)
-            #     out = y - out
-            #     self.allpass_indexes[j] = int(idx + 1) % int(self.allpass_sizes[j])
-            #     self.allpass_buffers[j] = b
-            #     j += 1
+            j = uint(0)
+            while j < uint(4):
+                b = ptr16(self.allpass_buffers[j])
+                idx = uint(self.allpass_indexes[j])
+                y = b[idx]
+                b[idx] = out + (y >> 1)
+                out = y - out
+                self.allpass_indexes[j] = int(idx + 1) % int(self.allpass_sizes[j])
+                self.allpass_buffers[j] = b
+                j += 1
 
             # mixed = (s * mix_dry) >> 16  # + ((out * mix_wet) >> 15)
 
-            # if inp > 32768:
-            #     mixed = 65536 - (((65536 - inp) * mix_dry) >> 15)
-            # else:
-            #     mixed = (inp * mix_dry) >> 15
+            if inp > 32768:
+                mixed1 = 65536 - (((65536 - inp) * mix_dry) >> 15)
+            else:
+                mixed1 = (inp * mix_dry) >> 15
 
             # mixed = 0
             if out > 32768:
-                mixed = 65536 - (((65536 - out) * mix_wet) >> 15)
+                mixed2 = 65536 - (((65536 - out) * mix_wet) >> 15)
             else:
-                mixed = (out * mix_wet) >> 15
+                mixed2 = (out * mix_wet) >> 15
 
-            buf[i] = input_buf[i]
-            # buf[i] = mixed
+            # buf[i] = input_buf[i]
+            buf[i] = mixed1 + mixed2
             # print(out)
             # print(mixed)
             i += 1

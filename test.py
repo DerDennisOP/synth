@@ -3,7 +3,7 @@ import synth
 import array
 import input
 
-LEDS = input.Led([19,20,21,22])
+LEDS = input.Led([19, 20, 21, 22])
 CONFIG = synth.Config()
 CONFIG.sample_rate = 1024
 SYNTH = synth.Synth(CONFIG)
@@ -14,6 +14,7 @@ square = SYNTH.add_module(synth.Sawtooth)
 mixer = SYNTH.add_module(synth.Mixer)
 envelope = SYNTH.add_module(synth.Envelope)
 lpf = SYNTH.add_module(synth.LowPassFilter)
+reverb = SYNTH.add_module(synth.Reverb)
 
 frequency.set_value(1)
 sine.set("frequency", frequency)
@@ -21,7 +22,8 @@ saw.set("frequency", frequency)
 square.set("frequency", frequency)
 envelope.set("input", sine)
 lpf.set("input", sine)
-SYNTH.output.set("input", lpf)
+reverb.set("input", sine)
+SYNTH.output.set("input", reverb)
 
 envelope.attack = 0.8
 envelope.decay = 0.8
@@ -40,7 +42,7 @@ def messure():
             envelope.trigger_attack()
         elif envelope.is_sustaining():
             envelope.trigger_release()
-        
+
         # SYNTH.get_buffer()
     t2 = time.time_ns()
 
