@@ -22,6 +22,7 @@
     in {
       devShell = with pkgs; mkShell {
         packages = [
+          esptool
           mpremote
           thonny
           pythonEnv
