@@ -175,7 +175,11 @@ async def main():
                     pass
 
                 elif i == 7:
-                    MENUE.add_module()
+                    if MENUE.get_menu_state() == "New_Module_Menu":
+                        MENUE.add_module()
+                    else:
+                        # Switch to new module menu or other functionality
+                        pass
 
                 break
 
@@ -193,6 +197,12 @@ async def main():
                     record = False
 
         MENUE.get_pot_states(p.get_V())
+        
+        # Update button states for menu system
+        button_states = []
+        for button in buttons.get_buttons()[:3]:  # Only first 3 buttons for menu
+            button_states.append(button.is_pressed)
+        MENUE.set_button_states(button_states)
 
         # SYNTH.output.set_amplitude(p.get_state(0,20)*2)
         # pentatonik_frequencies = pentatonik(notes.tones["A"+ str(2 + p[1])])
