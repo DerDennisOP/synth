@@ -37,6 +37,7 @@ envelope = SYNTH.add_module(synth.Envelope)
 lpf = SYNTH.add_module(synth.LowPassFilter)
 hpf = SYNTH.add_module(synth.HighPassFilter)
 noise = SYNTH.add_module(synth.Noise)
+shifter = SYNTH.add_module(synth.PitchShifter)
 ak_wave = 0
 ak_effect = 0
 loop_buffer = []
@@ -66,10 +67,11 @@ mixer.set("input1_volume", volume_sine)
 # mixer5.set("0", mixer6)
 # mixer6.set("0", saw)
 # SYNTH.get_module(mixer).add_channel(saw)
+shifter.set("input", mixer)
 envelope.set("input", mixer)
 lpf.set("input", envelope)
 hpf.set("input", envelope)
-SYNTH.output.set("input", hpf)
+SYNTH.output.set("input", lpf)
 
 
 _thread.start_new_thread(MENUE.display, ())
@@ -137,7 +139,7 @@ async def main():
     record = False
     looping = None
 
-    SYNTH.output.set_amplitude(10)
+    SYNTH.output.set_amplitude(20)
 
     while True:
         for i, button in enumerate(buttons.get_buttons()):
@@ -197,7 +199,7 @@ async def main():
                     record = False
 
         MENUE.get_pot_states(p.get_V())
-        
+
         # Update button states for menu system
         button_states = []
         for button in buttons.get_buttons()[:3]:  # Only first 3 buttons for menu

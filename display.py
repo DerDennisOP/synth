@@ -34,26 +34,26 @@ class Display(TFT):
         for x, y in enumerate(buffer):
             current_pixel = (int(x / buffer_len * 160), int((y + 256) / 512 * 128))
             if last_pixel is not None:
-                self.draw_arrow(last_pixel, current_pixel, TFT.GREEN)
+                self.line(last_pixel, current_pixel, TFT.GREEN)
             last_pixel = current_pixel
-        self.draw_arrow(last_pixel, current_pixel, TFT.GREEN)
+        self.line(last_pixel, current_pixel, TFT.GREEN)
 
     def draw_arrow(self, pos1, pos2, color):
         self.line(pos1, pos2, color)
 
         dx = pos2[0] - pos1[0]
         dy = pos2[1] - pos1[1]
-        
+
         # Avoid division by zero for identical points
         length = math.sqrt(dx * dx + dy * dy)
         if length < 1e-6:
             return
-        
-        # Calculate rotation angle using atan2 for proper quadrant handling
-        rot = math.atan2(dy, dx) + math.pi / 2
 
-        width = 4
-        height = 16
+        # Calculate rotation angle using atan2 for proper quadrant handling
+        rot = math.atan2(dy, dx) + 3 * math.pi / 2
+
+        width = 2
+        height = 10
 
         position = pos2
         points = [
@@ -104,7 +104,7 @@ class Window:
         # New_Module_Menu
         # Module_map
         # Module_settings
-        self.display_state = "Graph"
+        self.display_state = "Module_map"
         self.size = [160, 128]
         self.update_buffer = False
         self.synth = synth_instance
@@ -174,16 +174,18 @@ class Window:
             elif self.display_state == "Module_settings":
                 if not self.init_menu:
                     self.init_menu = True
-                    self.draw_module_settings()
+                    self.draw_module_settings_menu()
                     self.last_setting_index = self.current_setting_index
                     self.last_pot_states = self.pot_states[:]
-                
+
                 self.handle_module_settings_input()
-                
+
                 # Only redraw if something changed
-                if (self.current_setting_index != self.last_setting_index or 
-                    self.pot_states != self.last_pot_states):
-                    self.draw_module_settings()
+                if (
+                    self.current_setting_index != self.last_setting_index
+                    or self.pot_states != self.last_pot_states
+                ):
+                    self.draw_module_settings_menu()
                     self.last_setting_index = self.current_setting_index
                     self.last_pot_states = self.pot_states[:]
 
@@ -194,6 +196,7 @@ class Window:
             self.update_buffer = True
 
     def switch(self, display_state):
+        self.tft.clear()
         self.display_state = display_state
 
     def show_graph(self, module):
@@ -220,7 +223,7 @@ class Window:
         # Ensure pot_states[0] is within valid module range
         max_modules = len(self.all_modules) - 1
         bounded_selection = max(0, min(self.pot_states[0], max_modules))
-        
+
         if self.selected_module != bounded_selection:
             self.selected_module = bounded_selection
             f = self.selected_module + 1
@@ -235,27 +238,31 @@ class Window:
     def get_pot_states(self, pots, max_v=3.3):
         for i, pot in enumerate(pots):
             if self.steps[i] > 0:
-                self.pot_states[i] = max(0, min(round(self.steps[i] * pot / max_v), self.steps[i]))
+                self.pot_states[i] = max(
+                    0, min(round(self.steps[i] * pot / max_v), self.steps[i])
+                )
             else:
                 self.pot_states[i] = 0
 
     def draw_module_map(self, rad=4):
         sorted_modules = self.synth.sort_modules()
-        
+
         # Calculate grid dimensions based on module dependencies
         layers = {}
         layer_counts = {}
-        
+
         # Assign modules to layers based on their dependency depth
         for module in sorted_modules:
             max_input_layer = -1
             for input_module in module.get_inputs().values():
                 if str(input_module.get_id()) in layers:
-                    max_input_layer = max(max_input_layer, layers[str(input_module.get_id())])
-            
+                    max_input_layer = max(
+                        max_input_layer, layers[str(input_module.get_id())]
+                    )
+
             current_layer = max_input_layer + 1
             layers[str(module.get_id())] = current_layer
-            
+
             if current_layer not in layer_counts:
                 layer_counts[current_layer] = 0
             layer_counts[current_layer] += 1
@@ -263,24 +270,30 @@ class Window:
         # Calculate positions
         max_layer = max(layers.values()) if layers else 0
         max_modules_per_layer = max(layer_counts.values()) if layer_counts else 1
-        
+
         layer_positions = {layer: 0 for layer in layer_counts.keys()}
         pos = {}
-        
+
         for module in sorted_modules:
             module_id = str(module.get_id())
             layer = layers[module_id]
             position_in_layer = layer_positions[layer]
-            
+
             # Calculate x position based on layer
-            x = int((self.size[0] * 0.9) * (layer + 1) / (max_layer + 2)) + int(self.size[0] * 0.05)
-            
+            x = int((self.size[0] * 0.9) * (layer + 1) / (max_layer + 2)) + int(
+                self.size[0] * 0.05
+            )
+
             # Calculate y position based on position in layer
             if layer_counts[layer] > 1:
-                y = int((self.size[1] * 0.8) * (position_in_layer + 1) / (layer_counts[layer] + 1)) + int(self.size[1] * 0.1)
+                y = int(
+                    (self.size[1] * 0.8)
+                    * (position_in_layer + 1)
+                    / (layer_counts[layer] + 1)
+                ) + int(self.size[1] * 0.1)
             else:
                 y = int(self.size[1] / 2)
-            
+
             pos[module_id] = (x, y)
             layer_positions[layer] += 1
 
@@ -306,18 +319,27 @@ class Window:
 
     def select_module_in_map(self, rad=4):
         # Ensure pot_states are within valid grid bounds
-        if (self.pot_states[0] >= len(self.module_map_grid) or 
-            self.pot_states[1] >= len(self.module_map_grid[0]) if self.module_map_grid else True):
+        if (
+            self.pot_states[0] >= len(self.module_map_grid)
+            or self.pot_states[1] >= len(self.module_map_grid[0])
+            if self.module_map_grid
+            else True
+        ):
             return
-            
+
         m_id = self.module_map_grid[self.pot_states[0]][self.pot_states[1]]
         if self.selected_module_id != m_id:
             # Deselect previous module
-            if self.selected_module_id != "" and self.selected_module_id in self.module_map_pos:
+            if (
+                self.selected_module_id != ""
+                and self.selected_module_id in self.module_map_pos
+            ):
                 # Get the module to restore its original color
                 try:
                     module = self.synth.get_module(self.selected_module_id)
-                    original_color = self.color_legend.get(type(module).__name__, self.tft.WHITE)
+                    original_color = self.color_legend.get(
+                        type(module).__name__, self.tft.WHITE
+                    )
                     self.tft.fillcircle(
                         self.module_map_pos[self.selected_module_id],
                         rad,
@@ -330,13 +352,13 @@ class Window:
                         rad,
                         self.tft.RED,
                     )
-            
+
             # Select new module
             if m_id != "" and m_id in self.module_map_pos:
                 self.tft.fillcircle(self.module_map_pos[m_id], rad, self.tft.WHITE)
-                
+
             self.selected_module_id = m_id
-        
+
         # Check if button 0 is pressed to open module settings
         if self.button_states[0] and self.selected_module_id != "":
             self.open_module_settings(self.selected_module_id)
@@ -353,75 +375,94 @@ class Window:
             options = module.get_options()
             self.steps[0] = len(options) - 1 if options else 0  # For option selection
             self.steps[1] = 100  # For value adjustment (will be adjusted per option)
-            self.steps[2] = 0    # Reserved for future use
+            self.steps[2] = 0  # Reserved for future use
             return True
         except Exception as e:
             print(f"Error opening module settings: {e}")
             return False
-    
-    def draw_module_settings(self):
+
+    def draw_module_settings_menu(self):
         """Draw the module settings interface"""
         if not self.settings_module:
             # Clear screen and show error
             self.tft.fillrect((0, 0), self.size, self.tft.BLACK)
             self.tft.text((10, 10), "No module selected", self.tft.WHITE, sysfont)
             return
-        
+
         # Clear screen
         self.tft.fillrect((0, 0), self.size, self.tft.BLACK)
-        
+
         # Module title
         module_name = type(self.settings_module).__name__
         self.tft.text((10, 10), f"Settings: {module_name}", self.tft.WHITE, sysfont)
-        
+
         # Get module options
         options = self.settings_module.get_options()
         if not options:
             self.tft.text((10, 30), "No settings available", self.tft.YELLOW, sysfont)
             return
-        
+
         # Display options with selection indicator
         y_pos = 30
         for i, option in enumerate(options):
-            color = self.tft.WHITE if i == self.current_setting_index else self.tft.color(100, 100, 100)
-            
+            color = (
+                self.tft.WHITE
+                if i == self.current_setting_index
+                else self.tft.color(100, 100, 100)
+            )
+
             # Selection indicator
             if i == self.current_setting_index:
                 self.tft.text((5, y_pos), ">", self.tft.YELLOW, sysfont)
-            
+
             # Option name
             self.tft.text((15, y_pos), option, color, sysfont)
-            
+
             # Try to get current value
             try:
                 current_value = getattr(self.settings_module, option, "N/A")
                 self.tft.text((80, y_pos), f": {current_value}", color, sysfont)
             except:
                 pass
-            
+
             y_pos += 12
-        
+
         # Instructions
-        self.tft.text((10, self.size[1] - 30), "Pot1: Select", self.tft.color(150, 150, 150), sysfont)
-        self.tft.text((10, self.size[1] - 18), "Pot2: Adjust", self.tft.color(150, 150, 150), sysfont)
-        self.tft.text((10, self.size[1] - 6), "Btn0: Back", self.tft.color(150, 150, 150), sysfont)
-    
+        self.tft.text(
+            (10, self.size[1] - 30),
+            "Pot1: Select",
+            self.tft.color(150, 150, 150),
+            sysfont,
+        )
+        self.tft.text(
+            (10, self.size[1] - 18),
+            "Pot2: Adjust",
+            self.tft.color(150, 150, 150),
+            sysfont,
+        )
+        self.tft.text(
+            (10, self.size[1] - 6), "Btn0: Back", self.tft.color(150, 150, 150), sysfont
+        )
+
+    def draw_module_settings(self):
+        pass
+
     def handle_module_settings_input(self):
         """Handle input for module settings menu"""
         if not self.settings_module:
             return
-        
+
         options = self.settings_module.get_options()
         if not options:
             return
-        
+
         # Update setting selection based on pot 0
         new_index = max(0, min(self.pot_states[0], len(options) - 1))
         self.current_setting_index = new_index
-        
+
         # Get current option
         current_option = options[self.current_setting_index]
-        
+
         # Handle value adjustment based on pot 1
         if hasattr(self.settings_module, f"set_{current_option}"):
             # Determine value range based on the option type
@@ -445,7 +486,15 @@ class Window:
                 new_value = (self.pot_states[1] / self.steps[1]) * 2.0
             elif current_option == "type":
                 # Noise type: select from available types
-                noise_types = ["white", "pink", "red", "violet", "blue", "gray", "black"]
+                noise_types = [
+                    "white",
+                    "pink",
+                    "red",
+                    "violet",
+                    "blue",
+                    "gray",
+                    "black",
+                ]
                 type_index = max(0, min(self.pot_states[1], len(noise_types) - 1))
                 new_value = noise_types[type_index]
             elif current_option == "value":
@@ -454,20 +503,21 @@ class Window:
             else:
                 # Default: 0.0 to 1.0
                 new_value = self.pot_states[1] / self.steps[1]
-            
+
             # Apply the new value
             try:
                 setter_method = getattr(self.settings_module, f"set_{current_option}")
                 setter_method(new_value)
             except Exception as e:
                 print(f"Error setting {current_option}: {e}")
-        
-        # Check if button 0 is pressed to go back
+
+        # Check if button 5 is pressed to go back
         if self.button_states[0]:
             self.display_state = "Module_map"
             self.settings_module = None
             self.init_menu = False  # Reset init_menu for next time
             self.button_states[0] = False  # Reset button state
+            self.tft.clear()
 
     def draw_str_list(self, list, pos=10, distance=10, margin=10):
         for i, text in enumerate(list):
@@ -476,15 +526,12 @@ class Window:
 
     def get_menu_state(self):
         return self.display_state
-    
+
     def get_button_states(self):
-        # Placeholder function - returns current button states
-        # In actual implementation, this would read from hardware
         return self.button_states
-    
+
     def set_button_states(self, states):
-        # Helper function to set button states for testing/integration
-        self.button_states = states[:3] if len(states) >= 3 else [False, False, False]
+        self.button_states = states[-3:]
 
     def loop_menu(self):
         pass

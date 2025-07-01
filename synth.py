@@ -301,17 +301,23 @@ class Noise(SynthModule):
             # Violet noise: +6dB per octave (frequency^2 response)
             for i in range(self.lut_amount):
                 freq_weight = (i / self.lut_amount) ** 2
-                self.lut[i] = int(self.base.max * freq_weight * (2 * random.random() - 1))
+                self.lut[i] = int(
+                    self.base.max * freq_weight * (2 * random.random() - 1)
+                )
         elif self.type == "blue":
             # Blue noise: +3dB per octave (frequency response)
             for i in range(self.lut_amount):
                 freq_weight = i / self.lut_amount
-                self.lut[i] = int(self.base.max * freq_weight * (2 * random.random() - 1))
+                self.lut[i] = int(
+                    self.base.max * freq_weight * (2 * random.random() - 1)
+                )
         elif self.type == "gray":
             # Gray noise: psychoacoustically flat noise
             a_weights = [1.0, 0.8, 0.6, 0.4, 0.3, 0.2, 0.15, 0.1]
             for i in range(self.lut_amount):
-                band = min(int(i * len(a_weights) / self.lut_amount), len(a_weights) - 1)
+                band = min(
+                    int(i * len(a_weights) / self.lut_amount), len(a_weights) - 1
+                )
                 weight = a_weights[band]
                 self.lut[i] = int(self.base.max * weight * (2 * random.random() - 1))
         elif self.type == "black":
@@ -324,7 +330,9 @@ class Noise(SynthModule):
                     self.lut[i] = int(
                         (
                             self.lut[i - 1] * 0.7
-                            + random.randint(-self.base.max, self.base.max) * freq_weight * 0.3
+                            + random.randint(-self.base.max, self.base.max)
+                            * freq_weight
+                            * 0.3
                         )
                         / 1.0
                     )
@@ -347,7 +355,9 @@ class Noise(SynthModule):
             "gray",
             "black",
         ]:
-            raise ValueError(f"Noise type must be one of: white, pink, red, violet, blue, gray, black")
+            raise ValueError(
+                f"Noise type must be one of: white, pink, red, violet, blue, gray, black"
+            )
         self.type = noise_type
 
     @micropython.viper
@@ -423,11 +433,7 @@ class Output(SynthModule):
 
         i = uint(0)
         while i < buffer_size:
-            out = input_buffer[i] * amplitude
-            if out > 32768:
-                buf[i] = 32768
-            else:
-                buf[i] = out
+            buf[i] = input_buffer[i] * amplitude
             i += 1
 
 
