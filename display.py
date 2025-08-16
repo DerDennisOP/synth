@@ -104,7 +104,7 @@ class Window:
         # New_Module_Menu
         # Module_map
         # Module_settings
-        self.display_state = "Module_map"
+        self.display_state = "Graph"
         self.size = [160, 128]
         self.update_buffer = False
         self.synth = synth_instance
@@ -174,7 +174,7 @@ class Window:
             elif self.display_state == "Module_settings":
                 if not self.init_menu:
                     self.init_menu = True
-                    self.draw_module_settings_menu()
+                    self.draw_module_settings()
                     self.last_setting_index = self.current_setting_index
                     self.last_pot_states = self.pot_states[:]
 
@@ -185,7 +185,7 @@ class Window:
                     self.current_setting_index != self.last_setting_index
                     or self.pot_states != self.last_pot_states
                 ):
-                    self.draw_module_settings_menu()
+                    self.draw_module_settings()
                     self.last_setting_index = self.current_setting_index
                     self.last_pot_states = self.pot_states[:]
 
@@ -381,7 +381,7 @@ class Window:
             print(f"Error opening module settings: {e}")
             return False
 
-    def draw_module_settings_menu(self):
+    def draw_module_settings(self):
         """Draw the module settings interface"""
         if not self.settings_module:
             # Clear screen and show error
@@ -443,9 +443,6 @@ class Window:
         self.tft.text(
             (10, self.size[1] - 6), "Btn0: Back", self.tft.color(150, 150, 150), sysfont
         )
-
-    def draw_module_settings(self):
-        pass
 
     def handle_module_settings_input(self):
         """Handle input for module settings menu"""
