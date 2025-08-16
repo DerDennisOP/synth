@@ -114,6 +114,7 @@ class Window:
         self.steps = [0, 0, 0]
         self.encoder_position = 0
         self.encoder_pressed = False
+        self.last_encoder_pressed = False
         self.button_states = [False, False, False]
         self.current_setting_index = 0
         self.current_setting_value = 0
@@ -226,20 +227,31 @@ class Window:
     def select_new_menu(self, pos=10, distance=10, margin=10, circle_size_prozent=0.25):
         # Use encoder position to select modules, with bounds checking
         max_modules = len(self.all_modules) - 1
-        bounded_selection = max(0, min(abs(self.encoder_position) % (max_modules + 1), max_modules))
+        if max_modules >= 0:
+            # Map encoder position to module selection (handle negative positions)
+            bounded_selection = self.encoder_position % (max_modules + 1)
+            if bounded_selection < 0:
+                bounded_selection = max_modules + bounded_selection + 1
 
-        if self.selected_module != bounded_selection:
-            self.selected_module = bounded_selection
-            f = self.selected_module + 1
-            circle_pos = (
-                margin - distance * circle_size_prozent,
-                pos + distance * circle_size_prozent * 1 + distance * f,
-            )
+            if self.selected_module != bounded_selection:
+                self.selected_module = bounded_selection
+                f = self.selected_module + 1
+                circle_pos = (
+                    margin - distance * circle_size_prozent,
+                    pos + distance * circle_size_prozent * 1 + distance * f,
+                )
 
-            self.tft.fillrect((0, 0), (margin, self.size[1]), TFT.BLACK)
-            self.tft.fillcircle(circle_pos, distance * circle_size_prozent, TFT.WHITE)
+                self.tft.fillrect((0, 0), (margin, self.size[1]), TFT.BLACK)
+                self.tft.fillcircle(
+                    circle_pos, distance * circle_size_prozent, TFT.WHITE
+                )
+
+        # Handle encoder button press to add module (detect rising edge)
+        if self.encoder_pressed and not self.last_encoder_pressed:
+            self.add_module()
 
     def get_encoder_state(self, position, is_pressed):
+        self.last_encoder_pressed = self.encoder_pressed
         self.encoder_position = position
         self.encoder_pressed = is_pressed
 
@@ -320,35 +332,23 @@ class Window:
         # Use encoder position to navigate module map
         if not self.module_map_grid:
             return
-            
-        # Calculate grid position based on encoder position
-        total_modules = sum(len(row) for row in self.module_map_grid if row)
-        if total_modules == 0:
-            return
-            
-        # Map encoder position to module index
-        module_index = abs(self.encoder_position) % total_modules
-        
-        # Find the module at this index
-        current_index = 0
-        selected_x, selected_y = 0, 0
-        found = False
-        
-        for x, row in enumerate(self.module_map_grid):
-            for y, module_id in enumerate(row):
+
+        # Get all non-empty module IDs from the grid
+        module_ids = []
+        for row in self.module_map_grid:
+            for module_id in row:
                 if module_id != "":
-                    if current_index == module_index:
-                        selected_x, selected_y = x, y
-                        found = True
-                        break
-                    current_index += 1
-            if found:
-                break
-                
-        if not found:
+                    module_ids.append(module_id)
+
+        if not module_ids:
             return
-            
-        m_id = self.module_map_grid[selected_x][selected_y]
+
+        # Map encoder position to module index (handle negative positions)
+        module_index = self.encoder_position % len(module_ids)
+        if module_index < 0:
+            module_index = len(module_ids) + module_index
+
+        m_id = module_ids[module_index]
         if self.selected_module_id != m_id:
             # Deselect previous module
             if (
@@ -380,10 +380,13 @@ class Window:
 
             self.selected_module_id = m_id
 
-        # Check if encoder switch is pressed to open module settings
-        if self.encoder_pressed and self.selected_module_id != "":
+        # Check if encoder switch is pressed to open module settings (detect rising edge)
+        if (
+            self.encoder_pressed
+            and not self.last_encoder_pressed
+            and self.selected_module_id != ""
+        ):
             self.open_module_settings(self.selected_module_id)
-            # Note: encoder press state is handled by the encoder class
 
     def open_module_settings(self, module_id):
         """Open the module settings menu for the specified module"""
@@ -456,7 +459,10 @@ class Window:
             sysfont,
         )
         self.tft.text(
-            (10, self.size[1] - 6), "Press: Back", self.tft.color(150, 150, 150), sysfont
+            (10, self.size[1] - 6),
+            "Press: Back",
+            self.tft.color(150, 150, 150),
+            sysfont,
         )
 
     def handle_module_settings_input(self):
@@ -469,18 +475,24 @@ class Window:
             return
 
         # Update setting selection based on encoder position
-        new_index = max(0, min(abs(self.encoder_position) % len(options), len(options) - 1))
+        # Use modulo to cycle through options (handle negative positions)
+        new_index = self.encoder_position % len(options)
+        if new_index < 0:
+            new_index = len(options) + new_index
         self.current_setting_index = new_index
 
         # Get current option
         current_option = options[self.current_setting_index]
 
-        # Handle value adjustment - for now, use a simple mapping of encoder position to value
-        # In a full implementation, you might want separate encoder modes for navigation vs adjustment
+        # For value adjustment, we could use a separate mode or different logic
+        # For now, let's use a simple approach: encoder position maps to value
         if hasattr(self.settings_module, f"set_{current_option}"):
-            # Map encoder position to a value between 0 and 100 for adjustment
-            adjustment_value = abs(self.encoder_position) % 101  # 0-100
-            
+            # Map encoder position to a value range - use absolute value and scale
+            # This gives us 0-100 range regardless of encoder direction
+            adjustment_value = (
+                abs(self.encoder_position) * 5
+            ) % 101  # 0-100, scaled by 5 for finer control
+
             # Determine value range based on the option type
             if current_option == "duty_cycle":
                 # Duty cycle: 0.0 to 1.0
@@ -511,7 +523,9 @@ class Window:
                     "gray",
                     "black",
                 ]
-                type_index = max(0, min(adjustment_value % len(noise_types), len(noise_types) - 1))
+                type_index = max(
+                    0, min(adjustment_value % len(noise_types), len(noise_types) - 1)
+                )
                 new_value = noise_types[type_index]
             elif current_option == "value":
                 # Input value: -255 to 255
@@ -527,8 +541,8 @@ class Window:
             except Exception as e:
                 print(f"Error setting {current_option}: {e}")
 
-        # Check if encoder switch is pressed to go back
-        if self.encoder_pressed:
+        # Check if encoder switch is pressed to go back (detect rising edge)
+        if self.encoder_pressed and not self.last_encoder_pressed:
             self.display_state = "Module_map"
             self.settings_module = None
             self.init_menu = False  # Reset init_menu for next time

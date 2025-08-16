@@ -198,7 +198,13 @@ async def main():
                     record_loop(time_pause, last_freq, time_press)
                     record = False
 
-        MENUE.get_encoder_state(encoder.get_position(), encoder.is_pressed())
+        encoder_pos = encoder.get_position()
+        encoder_pressed = encoder.is_pressed()
+        MENUE.get_encoder_state(encoder_pos, encoder_pressed)
+
+        # Debug output (remove this later)
+        if encoder_pos != 0 or encoder_pressed:
+            print(f"Encoder - Position: {encoder_pos}, Pressed: {encoder_pressed}")
 
         # Update button states for menu system
         button_states = []
