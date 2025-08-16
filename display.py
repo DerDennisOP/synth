@@ -112,13 +112,16 @@ class Window:
         self.selected_module_id = ""
         self.init_menu = False
         self.steps = [0, 0, 0]
-        self.pot_states = [0, 0, 0]
+        self.encoder_position = 0
+        self.encoder_pressed = False
+        self.last_encoder_pressed = False
         self.button_states = [False, False, False]
         self.current_setting_index = 0
         self.current_setting_value = 0
         self.settings_module = None
         self.last_setting_index = -1
-        self.last_pot_states = [-1, -1, -1]
+        self.last_encoder_position = -1
+        self.last_encoder_pressed = False
         self.module_map_pos = {}
         self.module_map_grid = []
         self.all_modules = {
@@ -183,11 +186,13 @@ class Window:
                 # Only redraw if something changed
                 if (
                     self.current_setting_index != self.last_setting_index
-                    or self.pot_states != self.last_pot_states
+                    or self.encoder_position != self.last_encoder_position
+                    or self.encoder_pressed != self.last_encoder_pressed
                 ):
                     self.draw_module_settings()
                     self.last_setting_index = self.current_setting_index
-                    self.last_pot_states = self.pot_states[:]
+                    self.last_encoder_position = self.encoder_position
+                    self.last_encoder_pressed = self.encoder_pressed
 
     def set_buffer(self, buffer):
         if not self.update_buffer:
@@ -220,29 +225,33 @@ class Window:
         del self.synth.modules[module.id]
 
     def select_new_menu(self, pos=10, distance=10, margin=10, circle_size_prozent=0.25):
-        # Ensure pot_states[0] is within valid module range
+        # Use encoder position to select modules, with bounds checking
         max_modules = len(self.all_modules) - 1
-        bounded_selection = max(0, min(self.pot_states[0], max_modules))
+        if max_modules >= 0:
+            # Map encoder position to module selection (handle negative positions)
+            bounded_selection = self.encoder_position % (max_modules + 1)
+            if bounded_selection < 0:
+                bounded_selection = max_modules + bounded_selection + 1
 
-        if self.selected_module != bounded_selection:
-            self.selected_module = bounded_selection
-            f = self.selected_module + 1
-            circle_pos = (
-                margin - distance * circle_size_prozent,
-                pos + distance * circle_size_prozent * 1 + distance * f,
-            )
-
-            self.tft.fillrect((0, 0), (margin, self.size[1]), TFT.BLACK)
-            self.tft.fillcircle(circle_pos, distance * circle_size_prozent, TFT.WHITE)
-
-    def get_pot_states(self, pots, max_v=3.3):
-        for i, pot in enumerate(pots):
-            if self.steps[i] > 0:
-                self.pot_states[i] = max(
-                    0, min(round(self.steps[i] * pot / max_v), self.steps[i])
+            if self.selected_module != bounded_selection:
+                self.selected_module = bounded_selection
+                f = self.selected_module + 1
+                circle_pos = (
+                    margin - distance * circle_size_prozent,
+                    pos + distance * circle_size_prozent * 1 + distance * f,
                 )
-            else:
-                self.pot_states[i] = 0
+
+                self.tft.fillrect((0, 0), (margin, self.size[1]), TFT.BLACK)
+                self.tft.fillcircle(circle_pos, distance * circle_size_prozent, TFT.WHITE)
+        
+        # Handle encoder button press to add module (detect rising edge)
+        if self.encoder_pressed and not self.last_encoder_pressed:
+            self.add_module()
+
+    def get_encoder_state(self, position, is_pressed):
+        self.last_encoder_pressed = self.encoder_pressed
+        self.encoder_position = position
+        self.encoder_pressed = is_pressed
 
     def draw_module_map(self, rad=4):
         sorted_modules = self.synth.sort_modules()
@@ -318,16 +327,26 @@ class Window:
         self.steps[0], self.steps[1] = self.create_position_grid()
 
     def select_module_in_map(self, rad=4):
-        # Ensure pot_states are within valid grid bounds
-        if (
-            self.pot_states[0] >= len(self.module_map_grid)
-            or self.pot_states[1] >= len(self.module_map_grid[0])
-            if self.module_map_grid
-            else True
-        ):
+        # Use encoder position to navigate module map
+        if not self.module_map_grid:
             return
-
-        m_id = self.module_map_grid[self.pot_states[0]][self.pot_states[1]]
+            
+        # Get all non-empty module IDs from the grid
+        module_ids = []
+        for row in self.module_map_grid:
+            for module_id in row:
+                if module_id != "":
+                    module_ids.append(module_id)
+        
+        if not module_ids:
+            return
+            
+        # Map encoder position to module index (handle negative positions)
+        module_index = self.encoder_position % len(module_ids)
+        if module_index < 0:
+            module_index = len(module_ids) + module_index
+            
+        m_id = module_ids[module_index]
         if self.selected_module_id != m_id:
             # Deselect previous module
             if (
@@ -359,10 +378,9 @@ class Window:
 
             self.selected_module_id = m_id
 
-        # Check if button 0 is pressed to open module settings
-        if self.button_states[0] and self.selected_module_id != "":
+        # Check if encoder switch is pressed to open module settings (detect rising edge)
+        if self.encoder_pressed and not self.last_encoder_pressed and self.selected_module_id != "":
             self.open_module_settings(self.selected_module_id)
-            self.button_states[0] = False  # Reset button state
 
     def open_module_settings(self, module_id):
         """Open the module settings menu for the specified module"""
@@ -429,19 +447,13 @@ class Window:
 
         # Instructions
         self.tft.text(
-            (10, self.size[1] - 30),
-            "Pot1: Select",
-            self.tft.color(150, 150, 150),
-            sysfont,
-        )
-        self.tft.text(
             (10, self.size[1] - 18),
-            "Pot2: Adjust",
+            "Encoder: Navigate/Adjust",
             self.tft.color(150, 150, 150),
             sysfont,
         )
         self.tft.text(
-            (10, self.size[1] - 6), "Btn0: Back", self.tft.color(150, 150, 150), sysfont
+            (10, self.size[1] - 6), "Press: Back", self.tft.color(150, 150, 150), sysfont
         )
 
     def handle_module_settings_input(self):
@@ -453,34 +465,42 @@ class Window:
         if not options:
             return
 
-        # Update setting selection based on pot 0
-        new_index = max(0, min(self.pot_states[0], len(options) - 1))
+        # Update setting selection based on encoder position
+        # Use modulo to cycle through options (handle negative positions)
+        new_index = self.encoder_position % len(options)
+        if new_index < 0:
+            new_index = len(options) + new_index
         self.current_setting_index = new_index
 
         # Get current option
         current_option = options[self.current_setting_index]
 
-        # Handle value adjustment based on pot 1
+        # For value adjustment, we could use a separate mode or different logic
+        # For now, let's use a simple approach: encoder position maps to value
         if hasattr(self.settings_module, f"set_{current_option}"):
+            # Map encoder position to a value range - use absolute value and scale
+            # This gives us 0-100 range regardless of encoder direction
+            adjustment_value = (abs(self.encoder_position) * 5) % 101  # 0-100, scaled by 5 for finer control
+            
             # Determine value range based on the option type
             if current_option == "duty_cycle":
                 # Duty cycle: 0.0 to 1.0
-                new_value = self.pot_states[1] / self.steps[1]
+                new_value = adjustment_value / 100.0
             elif current_option in ["attack", "decay", "sustain", "release"]:
                 # Envelope parameters: 0.0 to 2.0
-                new_value = (self.pot_states[1] / self.steps[1]) * 2.0
+                new_value = (adjustment_value / 100.0) * 2.0
             elif current_option in ["cutoff"]:
                 # Filter cutoff: 20 to 4000 Hz
-                new_value = 20 + (self.pot_states[1] / self.steps[1]) * 3980
+                new_value = 20 + (adjustment_value / 100.0) * 3980
             elif current_option in ["roomsize", "damp", "mix"]:
                 # Reverb parameters: 0.0 to 1.0
-                new_value = self.pot_states[1] / self.steps[1]
+                new_value = adjustment_value / 100.0
             elif current_option == "pitch":
                 # Pitch shifter: 0.1 to 2.0
-                new_value = 0.1 + (self.pot_states[1] / self.steps[1]) * 1.9
+                new_value = 0.1 + (adjustment_value / 100.0) * 1.9
             elif current_option == "amplitude":
                 # Amplitude: 0.0 to 2.0
-                new_value = (self.pot_states[1] / self.steps[1]) * 2.0
+                new_value = (adjustment_value / 100.0) * 2.0
             elif current_option == "type":
                 # Noise type: select from available types
                 noise_types = [
@@ -492,14 +512,14 @@ class Window:
                     "gray",
                     "black",
                 ]
-                type_index = max(0, min(self.pot_states[1], len(noise_types) - 1))
+                type_index = max(0, min(adjustment_value % len(noise_types), len(noise_types) - 1))
                 new_value = noise_types[type_index]
             elif current_option == "value":
                 # Input value: -255 to 255
-                new_value = int(-255 + (self.pot_states[1] / self.steps[1]) * 510)
+                new_value = int(-255 + (adjustment_value / 100.0) * 510)
             else:
                 # Default: 0.0 to 1.0
-                new_value = self.pot_states[1] / self.steps[1]
+                new_value = adjustment_value / 100.0
 
             # Apply the new value
             try:
@@ -508,12 +528,11 @@ class Window:
             except Exception as e:
                 print(f"Error setting {current_option}: {e}")
 
-        # Check if button 5 is pressed to go back
-        if self.button_states[0]:
+        # Check if encoder switch is pressed to go back (detect rising edge)
+        if self.encoder_pressed and not self.last_encoder_pressed:
             self.display_state = "Module_map"
             self.settings_module = None
             self.init_menu = False  # Reset init_menu for next time
-            self.button_states[0] = False  # Reset button state
             self.tft.clear()
 
     def draw_str_list(self, list, pos=10, distance=10, margin=10):

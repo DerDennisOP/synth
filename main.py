@@ -11,7 +11,7 @@ import display
 import _thread
 
 BUTTONS = input.Buttons(([13, 12, 11, 10, 9, 8, 7, 6]))
-POTENTIOMETER = input.Potentiometers([26, 27, 28], 3.3)
+ROTARY_ENCODER = input.RotaryEncoder(26, 27, 28)
 LEDS = input.Led([19, 20, 21, 22])
 SPEAKER = input.Speaker(buffer_size=600)
 SYNTH = synth.Synth(synth.Config())
@@ -127,7 +127,7 @@ pentatonik_frequencies = pentatonik(input_frequency)
 
 async def main():
     global is_recording, is_playing, loop_buffer, last_press_time
-    p = POTENTIOMETER
+    encoder = ROTARY_ENCODER
     buttons = BUTTONS
     asyncio.create_task(updatespeaker())
     LEDS.set_led_off(0)
@@ -198,7 +198,13 @@ async def main():
                     record_loop(time_pause, last_freq, time_press)
                     record = False
 
-        MENUE.get_pot_states(p.get_V())
+        encoder_pos = encoder.get_position()
+        encoder_pressed = encoder.is_pressed()
+        MENUE.get_encoder_state(encoder_pos, encoder_pressed)
+        
+        # Debug output (remove this later)
+        if encoder_pos != 0 or encoder_pressed:
+            print(f"Encoder - Position: {encoder_pos}, Pressed: {encoder_pressed}")
 
         # Update button states for menu system
         button_states = []
